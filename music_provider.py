@@ -112,7 +112,7 @@ class MusicProvider:
         image=image if isinstance(image,str) and image.startswith(('http://','https://')) else ''
         original_image=image
         if image.startswith(self.proxy+'/'):
-            # Loopback images are relayed via the authenticated ONDA backend.
+            # Loopback images are relayed via the authenticated IVOX backend.
             image='/api/online/art/'+source+':'+raw
         return {'id':source+':'+raw,'provider_id':raw,'provider':source,'source':'Piped' if source=='piped' else 'Audius','title':str(title)[:300],'channel':str(artist)[:200],'thumbnail':image,'art_url':original_image,'duration':seconds if isinstance(seconds,(int,float)) and seconds>=0 else None,'available':True}
 
@@ -129,7 +129,7 @@ class MusicProvider:
             nextpage=data.get('nextpage')
         else:
             offset=int(cursor or 0)
-            data=self.request(source,'/v1/tracks/search',{'query':q,'limit':20,'offset':offset,'app_name':'ONDA'})
+            data=self.request(source,'/v1/tracks/search',{'query':q,'limit':20,'offset':offset,'app_name':'IVOX'})
             entries=data.get('data',[]);items=[self.normalize(item,source) for item in entries]
             nextpage=offset+20 if len(entries)==20 else None
         items=[item for item in items if item];self.store(c,items)
@@ -223,9 +223,9 @@ class MusicProvider:
             item=self.normalize(dict(data,id=raw),source)
             if item:self.store(c,[item])
         else:
-            data=self.request(source,'/v1/tracks/'+raw,{'app_name':'ONDA'}).get('data',{})
+            data=self.request(source,'/v1/tracks/'+raw,{'app_name':'IVOX'}).get('data',{})
             if not self.normalize(data,source):raise ProviderError(422,'no_audio','La canción de Audius no está disponible para reproducción pública.')
-            url=self.audius+'/v1/tracks/'+raw+'/stream?app_name=ONDA';mime='audio/mpeg';level=4
+            url=self.audius+'/v1/tracks/'+raw+'/stream?app_name=IVOX';mime='audio/mpeg';level=4
         token=secrets.token_urlsafe(32)
         with self.lock:
             self.tickets={k:v for k,v in self.tickets.items() if v['expires']>time.time()}

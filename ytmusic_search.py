@@ -56,6 +56,6 @@ if __name__=='__main__':
             kwargs.setdefault('timeout',10)
             return super().request(*args,**kwargs)
     # The pinned parser returns empty song lists with the Spanish localization.
-    # English internal labels work; original song/artist names and ONDA stay unchanged.
+    # English internal labels work; original song/artist names and IVOX stay unchanged.
     client=YTMusic(language='en',location='ES',requests_session=BoundedSession())
     print(json.dumps(client.search(query,filter=kind,limit=limit),ensure_ascii=True))

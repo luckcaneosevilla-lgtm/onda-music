@@ -38,7 +38,7 @@ try:
         search(page,'piped');first=page.locator('.video-row').first;reference=first.get_attribute('data-video')
         report['checks']['2_real_feid_search']={'passed':True,'count':page.locator('.video-row').count(),'id':reference,'title':first.locator('h3').inner_text(),'channel':first.locator('.video-info p').inner_text(),'duration':first.locator('.duration').inner_text(),'thumbnail':bool(first.locator('img').get_attribute('src'))}
         page.screenshot(path=str(out/'hybrid-search-desktop.png'),full_page=True)
-        first.locator('[data-online-fav]').click();page.get_by_text('Guardado en favoritos de ONDA.',exact=True).wait_for()
+        first.locator('[data-online-fav]').click();page.get_by_text('Guardado en favoritos de IVOX.',exact=True).wait_for()
         page.locator('[data-online-menu]').first.click();page.get_by_role('button',name='Guardar en playlist',exact=True).click();page.get_by_role('button',name='Nueva playlist',exact=True).click()
         page.get_by_label('Nombre',exact=True).fill('Feid · Referencias reales');page.get_by_role('button',name='Guardar',exact=True).click();page.get_by_text('Playlist creada y referencia guardada.',exact=True).wait_for()
         report['checks']['4_favorite_and_playlist']={'passed':True,'reference':reference}

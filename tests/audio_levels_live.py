@@ -68,7 +68,7 @@ try:
         if small:check(page,small,'small_channel_normal_chain');page.locator('#close-online').click()
         # References are independent from the resolution engine used to play them.
         select(page,rick)
-        page.locator('[data-online-fav]').first.click();page.get_by_text('Guardado en favoritos de ONDA.',exact=True).wait_for()
+        page.locator('[data-online-fav]').first.click();page.get_by_text('Guardado en favoritos de IVOX.',exact=True).wait_for()
         page.locator('[data-online-menu]').first.click();page.get_by_role('button',name='Guardar en playlist',exact=True).click();page.get_by_role('button',name='Nueva playlist',exact=True).click()
         page.get_by_label('Nombre',exact=True).fill('Niveles · Referencia real');page.get_by_role('button',name='Guardar',exact=True).click();page.get_by_text('Playlist creada y referencia guardada.',exact=True).wait_for()
         second=browser.new_context(viewport={'width':390,'height':844});mobile=second.new_page();mobile.goto(url)

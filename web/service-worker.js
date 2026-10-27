@@ -1,6 +1,6 @@
-const CACHE = 'onda-app-shell-v2';
+const CACHE = 'ivox-app-shell-v3';
 const SHELL = ['/', '/index.html', '/style.css', '/online.css', '/player.css',
-  '/app.js', '/online.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png'];
+  '/app.js', '/online.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav'];
 const ASSETS = new Set(SHELL);
 const PAGES = new Set(['/', '/index.html', '/library', '/plan', '/files', '/privacy']);
 
@@ -11,7 +11,7 @@ self.addEventListener('install', event => {
 });
 self.addEventListener('activate', event => {
   event.waitUntil(caches.keys().then(keys => Promise.all(
-    keys.filter(key => key.startsWith('onda-app-shell-') && key !== CACHE).map(key => caches.delete(key))
+    keys.filter(key => /^(onda|ivox)-app-shell-/.test(key) && key !== CACHE).map(key => caches.delete(key))
   )).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', event => {

@@ -2,7 +2,7 @@ const recoveryToken=location.hash.slice(1);
 history.replaceState(null,'','/recover');
 const form=document.querySelector('#recovery-form'),result=document.querySelector('#result');
 if(!/^[A-Za-z0-9_-]{43}$/.test(recoveryToken)){
-  form.hidden=true;result.textContent='Necesitas un enlace de recuperación local válido. Genera otro desde la terminal del equipo que ejecuta ONDA.';
+  form.hidden=true;result.textContent='Necesitas un enlace de recuperación local válido. Genera otro desde la terminal del equipo que ejecuta IVOX.';
 }
 form.onsubmit=async event=>{
   event.preventDefault();

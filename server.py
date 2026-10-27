@@ -113,7 +113,7 @@ class OndaHTTPServer(ThreadingHTTPServer):
     block_on_close=True
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'ONDA'
+    server_version = 'IVOX'
     def log_message(self, fmt, *args): pass
     def send(self,status,data,cookie=None):
         raw=json.dumps(data,ensure_ascii=False).encode()
@@ -172,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
                 require(self.command=='GET','Método no permitido.',405)
                 if path=='/youtube-setup':
                     self.send(410,{'error':'La reproducción actual usa Piped y Audius. Consulta README_SECCION_REPRODUCCION.md.'});return
-                static_types={'app.js':'text/javascript','online.js':'text/javascript','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','index.html':'text/html; charset=utf-8'}
+                static_types={'app.js':'text/javascript','online.js':'text/javascript','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','index.html':'text/html; charset=utf-8'}
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 self.send_response(200); self.headers_common(static_types[filename])
@@ -250,6 +250,11 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/api/admin'):
             require(u['role']=='admin','Acceso reservado a administradores.',403)
             return self.admin(c,u,path,method)
+        if path=='/api/audio/prefetch' and method=='POST':
+            ids=json.loads(self.body()).get('video_ids')
+            require(isinstance(ids,list) and len(ids)<=2 and all(isinstance(v,str) for v in ids),'Datos inválidos.')
+            for video_id in ids:resolver.prefetch(video_id)
+            self.send(202,{});return
         m=re.fullmatch(r'/api/audio/([A-Za-z0-9_-]{11})',path)
         if m and method=='GET':
             video_id=m[1]
@@ -404,7 +409,7 @@ class Handler(BaseHTTPRequestHandler):
     def relay(self,c,connection,response,mime,level):
         try:
             self.send_response(response.status);self.headers_common(mime)
-            self.send_header('X-ONDA-Audio-Level',str(level))
+            self.send_header('X-IVOX-Audio-Level',str(level))
             for header in ('Content-Length','Content-Range','Accept-Ranges'):
                 value=response.getheader(header)
                 if value:self.send_header(header,value)
@@ -495,16 +500,16 @@ def main():
         require(args.email is not None,'Indica --email.')
         # Never hold a write lock while waiting for interactive input.
         with db() as c:
-            u=c.execute('SELECT * FROM users WHERE email=?',(args.email.lower(),)).fetchone(); require(u is not None,'Primero registra la cuenta en ONDA.')
+            u=c.execute('SELECT * FROM users WHERE email=?',(args.email.lower(),)).fetchone(); require(u is not None,'Primero registra la cuenta en IVOX.')
         verified_password=getpass.getpass('Contraseña de la cuenta: ')
         with db() as c:
             c.execute('BEGIN IMMEDIATE')
             require(c.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND status='active'").fetchone()[0]==0,'Ya existe un administrador activo. Usa el panel.')
-            u=c.execute('SELECT * FROM users WHERE email=?',(args.email.lower(),)).fetchone(); require(u is not None,'Primero registra la cuenta en ONDA.')
+            u=c.execute('SELECT * FROM users WHERE email=?',(args.email.lower(),)).fetchone(); require(u is not None,'Primero registra la cuenta en IVOX.')
             require(password_ok(verified_password,u['password']),'Contraseña incorrecta.',403)
             c.execute("UPDATE users SET role='admin',status='active' WHERE id=?",(u['id'],)); audit(c,u['id'],u['id'],'bootstrap','Verificación local de contraseña',{'role':u['role']},{'role':'admin'}); c.commit()
-        print('Administrador configurado. Recarga ONDA.')
+        print('Administrador configurado. Recarga IVOX.')
     else:
-        print(f'ONDA: escuchando en 0.0.0.0:{args.port} · acceso local http://127.0.0.1:{args.port}'); OndaHTTPServer(('0.0.0.0',args.port),Handler).serve_forever()
+        print(f'IVOX: escuchando en 0.0.0.0:{args.port} · acceso local http://127.0.0.1:{args.port}'); OndaHTTPServer(('0.0.0.0',args.port),Handler).serve_forever()
 
 if __name__=='__main__': main()

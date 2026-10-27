@@ -1,4 +1,4 @@
-# ONDA
+# IVOX
 
 Descubrimiento musical online para uso privado: búsqueda principal con **ytmusicapi / YouTube Music**, respaldo **YouTube Data API**, y reproducción con **yt-dlp**, Piped y Audius mediante **HTML5 audio**. Se conservan cuentas, biblioteca privada, administración, roles y planes. El recorrido principal ya no depende de importaciones ni de un reproductor de YouTube.
 
@@ -16,7 +16,7 @@ docker compose up -d
 python server.py --port 8765
 ```
 
-Abre http://127.0.0.1:8765. ONDA escucha en `0.0.0.0:8765`: también puedes acceder mediante la IP local o Tailscale del equipo, si las reglas de red y firewall lo permiten. Los puertos Docker de Piped siguen limitados a localhost. No hay contraseñas predeterminadas: el script genera la contraseña de PostgreSQL y conserva los secretos existentes en `.env`. No se requiere la clave de YouTube para este recorrido.
+Abre http://127.0.0.1:8765. IVOX escucha en `0.0.0.0:8765`: también puedes acceder mediante la IP local o Tailscale del equipo, si las reglas de red y firewall lo permiten. Los puertos Docker de Piped siguen limitados a localhost. No hay contraseñas predeterminadas: el script genera la contraseña de PostgreSQL y conserva los secretos existentes en `.env`. No se requiere la clave de YouTube para este recorrido.
 
 ## Pantallas
 
@@ -27,7 +27,7 @@ Abre http://127.0.0.1:8765. ONDA escucha en `0.0.0.0:8765`: también puedes acce
 - `/files`: importaciones y biblioteca de archivos anteriores, como opción secundaria.
 - `/privacy`: explicación de datos y eliminación de la biblioteca online propia.
 
-La barra de audio permanece al navegar. Incluye los controles nativos de progreso, play/pausa y volumen (cuando el navegador lo admite), cola y anterior/siguiente. En iPhone debe iniciarse por un gesto del usuario. No se promete reproducción con pantalla bloqueada ni offline.
+La barra de audio permanece al navegar. Incluye los controles nativos de progreso, play/pausa y volumen (cuando el navegador lo admite), cola y anterior/siguiente. En iPhone basta un toque en Play: el primer toque en la app desbloquea el audio. No se promete reproducción con pantalla bloqueada ni offline.
 
 ### Búsqueda musical
 
@@ -43,13 +43,13 @@ Instala con `python -m pip install -r requirements.txt`. En esta máquina la dep
 
 ## Primer administrador
 
-Registra tu cuenta en ONDA con una contraseña de al menos 12 caracteres. Abre otra terminal en esta carpeta:
+Registra tu cuenta en IVOX con una contraseña de al menos 12 caracteres. Abre otra terminal en esta carpeta:
 
 ```powershell
 python server.py bootstrap-admin --email "tu-email@ejemplo.com"
 ```
 
-Introduce la contraseña de esa cuenta cuando se solicite; no se verá mientras escribes. El comando exige acceso local, verifica la contraseña y solo funciona si no existe un administrador activo. Registra el cambio en la auditoría. No mantiene una transacción de escritura mientras espera la contraseña. Recarga ONDA para entrar en `/admin`.
+Introduce la contraseña de esa cuenta cuando se solicite; no se verá mientras escribes. El comando exige acceso local, verifica la contraseña y solo funciona si no existe un administrador activo. Registra el cambio en la auditoría. No mantiene una transacción de escritura mientras espera la contraseña. Recarga IVOX para entrar en `/admin`.
 
 Los siguientes administradores se conceden en el panel. Nadie modifica su propio rol, plan o estado, y siempre debe quedar un administrador activo. No se asignó una cuenta de prueba como administrador en tus datos reales.
 
@@ -67,7 +67,7 @@ Abre el enlace privado que imprime y elige una contraseña nueva. Caduca en 10 m
 
 Los roles (`admin`, `user`) y planes (`free`, `premium`) son independientes. El panel concede Premium indefinido, hasta fecha concreta, prueba de N días o ampliación; también lo retira y suspende/reactiva cuentas. Retirada y suspensión requieren confirmación. Cada cambio guarda actor, fecha, motivo opcional y valores anteriores/posteriores. Se muestran los últimos 200 cambios; los anteriores se conservan en SQLite.
 
-| Regla propia de ONDA | Free inicial | Premium inicial |
+| Regla propia de IVOX | Free inicial | Premium inicial |
 | --- | --- | --- |
 | Playlists | 10 | 200 |
 | Almacenamiento local opcional | 1 GB | 20 GB |
@@ -85,9 +85,9 @@ Requisitos del servidor Linux:
 
 - Python 3.12 o posterior, `pip` y entorno virtual para instalar `requirements.txt`, que incluye **yt-dlp** y **ytmusicapi** con versiones fijadas.
 - **ffmpeg** disponible en el PATH para compatibilidad de formatos y operaciones de audio que lo necesiten; no es obligatorio para cada stream directo de la versión actual.
-- Git para subir/actualizar el código y **systemd** para ejecutar ONDA como servicio con usuario propio, directorio de trabajo y archivo de entorno privado.
-- **Tailscale**, conectado a la red privada del propietario. ONDA ya escucha en **`0.0.0.0:8765`**; el puerto **8765/TCP** debe ser accesible desde los dispositivos autorizados de esa red.
-- Almacenamiento persistente para SQLite, `.env` y, si se usan, archivos locales. Se debe copiar la base con ONDA detenido y conservar sus permisos privados.
+- Git para subir/actualizar el código y **systemd** para ejecutar IVOX como servicio con usuario propio, directorio de trabajo y archivo de entorno privado.
+- **Tailscale**, conectado a la red privada del propietario. IVOX ya escucha en **`0.0.0.0:8765`**; el puerto **8765/TCP** debe ser accesible desde los dispositivos autorizados de esa red.
+- Almacenamiento persistente para SQLite, `.env` y, si se usan, archivos locales. Se debe copiar la base con IVOX detenido y conservar sus permisos privados.
 - Docker Engine y Compose si se desea mantener la instancia local de Piped como respaldo; sus puertos 8080/8081 deben permanecer internos/loopback.
 - Conectividad saliente a los proveedores musicales. Para instalar la PWA desde móviles se necesita HTTPS confiable, también al acceder por Tailscale.
 
@@ -99,7 +99,7 @@ Contraseñas con scrypt y sal aleatoria, sesiones opacas de siete días almacena
 
 Las consultas y asociaciones de biblioteca verifican propietario. El administrador recibe datos de cuenta y uso agregado, sin archivos ni títulos privados de otras cuentas. Las mutaciones usan transacciones SQLite y las importaciones validan firmas y usan nombres internos aleatorios.
 
-`data/onda.sqlite` guarda cuentas, sesiones y referencias; `data/audio/` conserva archivos locales. Detén ONDA antes de copiar **toda** la carpeta `data` como copia coherente. Protege su acceso en Windows y no la publiques. `ONDA_DATA` permite una ruta privada alternativa.
+`data/onda.sqlite` guarda cuentas, sesiones y referencias; `data/audio/` conserva archivos locales. Detén IVOX antes de copiar **toda** la carpeta `data` como copia coherente. Protege su acceso en Windows y no la publiques. `ONDA_DATA` permite una ruta privada alternativa.
 
 La migración añade tablas y convierte referencias antiguas de YouTube a referencias de Piped con el mismo identificador, conservando favoritos y playlists. No borra cuentas, archivos ni asociaciones locales.
 
@@ -107,7 +107,7 @@ La migración añade tablas y convierte referencias antiguas de YouTube a refere
 
 `.env.example` lista la configuración. El servidor carga `.env` al arrancar; las variables del proceso prevalecen. Nunca publiques el archivo ni pegues sus claves en el chat. Los tickets de audio son temporales, privados y no se guardan como URLs permanentes en SQLite. El backend valida los destinos del relay para evitar un proxy abierto.
 
-Desde un iPhone conectado a la misma red local o a Tailscale usa `http://IP_DEL_EQUIPO:8765`; el firewall debe permitir esa conexión. Para HTTPS se necesita un certificado confiable y un proxy a `127.0.0.1:8765`; activa `ONDA_SECURE_COOKIE=1` solo detrás de HTTPS. No se han modificado el firewall ni el router. Las URLs locales de audio e imágenes de Piped se transmiten por ONDA, evitando que el teléfono contacte su propio localhost.
+Desde un iPhone conectado a la misma red local o a Tailscale usa `http://IP_DEL_EQUIPO:8765`; el firewall debe permitir esa conexión. Para HTTPS se necesita un certificado confiable y un proxy a `127.0.0.1:8765`; activa `ONDA_SECURE_COOKIE=1` solo detrás de HTTPS. No se han modificado el firewall ni el router. Las URLs locales de audio e imágenes de Piped se transmiten por IVOX, evitando que el teléfono contacte su propio localhost.
 
 El servidor HTTP incluido está orientado a uso local privado. Para exposición pública se necesita un servicio HTTP de producción y revisión operativa. Las importaciones locales se leen en memoria; no están diseñadas para cargas masivas. No se configura evasión de bloqueos de proveedores.
 
