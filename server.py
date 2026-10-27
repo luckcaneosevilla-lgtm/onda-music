@@ -67,6 +67,7 @@ def init():
         c.execute('DELETE FROM online_catalog WHERE refreshed<?',(now()-30*86400,))
         c.execute('INSERT OR IGNORE INTO plans VALUES(?,?,?,?,?)', ('free',1024*MB,10,50*MB,'{}'))
         c.execute('INSERT OR IGNORE INTO plans VALUES(?,?,?,?,?)', ('premium',20*1024*MB,200,250*MB,'{}'))
+    resolver.persist(DATA / 'onda.sqlite')
 
 def password_hash(password):
     salt = secrets.token_hex(16)

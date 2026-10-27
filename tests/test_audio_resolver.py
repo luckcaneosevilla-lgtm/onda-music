@@ -1,4 +1,6 @@
 import subprocess
+import tempfile
+from pathlib import Path
 import time
 import unittest
 from unittest.mock import patch
@@ -13,6 +15,18 @@ class ResolverTests(unittest.TestCase):
             args=run.call_args.args[0];self.assertIn('bestaudio',args);self.assertIn('--ignore-config',args);self.assertIn('-g',args);self.assertEqual(run.call_args.kwargs['timeout'],15);self.assertNotIn('shell',run.call_args.kwargs)
             self.assertGreater(r.cache['dQw4w9WgXcQ']['expires'],time.time()+1790)
             r.cache['dQw4w9WgXcQ']['expires']=0;r.resolve('dQw4w9WgXcQ');self.assertEqual(run.call_count,2)
+    def test_persistent_cache_survives_restart_and_expires(self):
+        result=SimpleNamespace(returncode=0,stdout='https://r1.googlevideo.com/videoplayback?mime=audio%2Fwebm\n')
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'onda.sqlite';r=YtDlpResolver();r.persist(path)
+            with patch('audio_resolver.subprocess.run',return_value=result) as run:
+                r.resolve('dQw4w9WgXcQ');self.assertEqual(run.call_count,1)
+            restarted=YtDlpResolver();restarted.persist(path)
+            with patch('audio_resolver.subprocess.run',return_value=result) as run:
+                self.assertEqual(restarted.resolve('dQw4w9WgXcQ')['mime'],'audio/webm');run.assert_not_called()
+            restarted.invalidate('dQw4w9WgXcQ');again=YtDlpResolver();again.persist(path);self.assertNotIn('dQw4w9WgXcQ',again.cache)
+            r.save('INSERT OR REPLACE INTO audio_url_cache VALUES(?,?,?,?)',('aaaaaaaaaaa','https://r1.googlevideo.com/x','audio/webm',time.time()-1))
+            expired=YtDlpResolver();expired.persist(path);self.assertNotIn('aaaaaaaaaaa',expired.cache)
     def test_timeout_negative_cache_and_invalid_destinations(self):
         r=YtDlpResolver()
         with patch('audio_resolver.subprocess.run',side_effect=subprocess.TimeoutExpired('yt-dlp',15)) as run:

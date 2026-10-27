@@ -1,9 +1,11 @@
 """Level 1: resolve pure audio in a bounded subprocess; keep URLs server-side."""
+from contextlib import closing
 import http.client
 import importlib.util
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -17,7 +19,24 @@ class AudioUnavailable(Exception):pass
 class YtDlpResolver:
     def __init__(self):
         self.cache={};self.failures={};self.guard=threading.Lock()
-        self.locks=[threading.Lock() for _ in range(32)];self.workers=threading.BoundedSemaphore(2)
+        self.locks=[threading.Lock() for _ in range(32)];self.workers=threading.BoundedSemaphore(2);self.store=None
+    def persist(self,path):
+        # Resolved URLs survive restarts; rows still honour the per-URL expiry.
+        self.store=str(path)
+        try:
+            with closing(sqlite3.connect(self.store,timeout=5)) as c,c:
+                c.execute('CREATE TABLE IF NOT EXISTS audio_url_cache(video_id TEXT PRIMARY KEY,url TEXT NOT NULL,mime TEXT NOT NULL,expires REAL NOT NULL)')
+                c.execute('DELETE FROM audio_url_cache WHERE expires<=?',(time.time(),))
+                rows=c.execute('SELECT video_id,url,mime,expires FROM audio_url_cache ORDER BY expires DESC LIMIT 200').fetchall()
+        except sqlite3.Error:self.store=None;return
+        with self.guard:
+            for video_id,url,mime,expires in reversed(rows):
+                if self.allowed(url):self.cache[video_id]={'url':url,'mime':mime,'expires':expires}
+    def save(self,sql,args):
+        if not self.store:return
+        try:
+            with closing(sqlite3.connect(self.store,timeout=5)) as c,c:c.execute(sql,args)
+        except sqlite3.Error:pass
     @staticmethod
     def allowed(url):
         try:
@@ -52,6 +71,7 @@ class YtDlpResolver:
                     self.cache={k:v for k,v in self.cache.items() if v['expires']>time.time()}
                     if len(self.cache)>=200:self.cache.pop(next(iter(self.cache)))
                     self.cache[video_id]=item;self.failures.pop(video_id,None)
+                self.save('INSERT OR REPLACE INTO audio_url_cache VALUES(?,?,?,?)',(video_id,item['url'],mime,expiry))
                 return item
             except (OSError,subprocess.TimeoutExpired,AudioUnavailable):
                 with self.guard:
@@ -63,7 +83,8 @@ class YtDlpResolver:
         finally:lock.release()
     def invalidate(self,video_id):
         with self.guard:self.cache.pop(video_id,None)
-    def open(self,video_id,range_header=None):
+        self.save('DELETE FROM audio_url_cache WHERE video_id=?',(video_id,))
+    def open(self,video_id,range_header=None,retry=True):
         item=self.resolve(video_id);url=item['url'];connection=None
         try:
             for _ in range(4):
@@ -78,6 +99,9 @@ class YtDlpResolver:
             raise AudioUnavailable()
         except (OSError,http.client.HTTPException,AudioUnavailable,ProviderError):
             if connection:connection.close()
-            self.invalidate(video_id);raise AudioUnavailable() from None
+            self.invalidate(video_id)
+            # A cached URL can be rejected early (e.g. new public IP); resolve once more.
+            if retry:return self.open(video_id,range_header,False)
+            raise AudioUnavailable() from None
 
 resolver=YtDlpResolver()
