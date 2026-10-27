@@ -17,11 +17,13 @@ from urllib.parse import urlparse, parse_qs
 from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
+import turso
 
 ROOT = Path(__file__).resolve().parent
 load_environment(ROOT / '.env')
 DATA = Path(os.environ.get('ONDA_DATA', ROOT / 'data')).resolve()
 MB = 1024**2
+TURSO = turso.Client(os.environ['TURSO_DATABASE_URL'], os.environ['TURSO_AUTH_TOKEN']) if os.environ.get('TURSO_DATABASE_URL') and os.environ.get('TURSO_AUTH_TOKEN') else None
 
 def now(): return int(time.time())
 
@@ -31,6 +33,9 @@ class Connection(sqlite3.Connection):
         finally: self.close()
 
 def db():
+    # With Turso configured the data lives in the cloud and survives container
+    # restarts; without it (local dev, tests) the classic SQLite file is used.
+    if TURSO: return turso.Connection(TURSO)
     c = sqlite3.connect(DATA / 'onda.sqlite', timeout=30, factory=Connection)
     c.row_factory = sqlite3.Row
     c.execute('PRAGMA foreign_keys=ON')

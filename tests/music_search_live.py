@@ -13,7 +13,7 @@ from youtube_provider import ProviderError
 from playwright.sync_api import sync_playwright
 
 out=Path(__file__).resolve().parents[1]/'test-results';out.mkdir(exist_ok=True)
-temp=tempfile.TemporaryDirectory();onda.DATA=Path(temp.name);onda.init()
+temp=tempfile.TemporaryDirectory();onda.DATA=Path(temp.name);onda.TURSO=None;onda.init()
 server=onda.OndaHTTPServer(('127.0.0.1',0),onda.Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
 url=f'http://127.0.0.1:{server.server_port}';report={'query':'Feid','errors':[]}
 try:

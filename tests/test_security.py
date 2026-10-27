@@ -12,6 +12,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 temporary=tempfile.TemporaryDirectory()
 os.environ['ONDA_DATA']=temporary.name
+os.environ['TURSO_DATABASE_URL']=''  # tests never touch the cloud database
 spec=importlib.util.spec_from_file_location('onda',Path(__file__).resolve().parents[1]/'server.py')
 onda=importlib.util.module_from_spec(spec); spec.loader.exec_module(onda)
 

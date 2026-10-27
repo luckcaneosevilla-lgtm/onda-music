@@ -13,7 +13,7 @@ from youtube_provider import ProviderError
 from playwright.sync_api import sync_playwright
 
 out=Path(__file__).resolve().parents[1]/'test-results';out.mkdir(exist_ok=True)
-temporary=tempfile.TemporaryDirectory();onda.DATA=Path(temporary.name);onda.init()
+temporary=tempfile.TemporaryDirectory();onda.DATA=Path(temporary.name);onda.TURSO=None;onda.init()
 server=onda.OndaHTTPServer(('127.0.0.1',0),onda.Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
 url=f'http://127.0.0.1:{server.server_port}';password=secrets.token_urlsafe(24)
 report={'architecture':'Piped + Audius / HTML5 audio','checks':{},'page_errors':[],'query':'Feid'}

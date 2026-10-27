@@ -16,7 +16,7 @@ AUDIUS={'data':[{'id':'AbCd1','title':'Fixture independiente','duration':180,'is
 
 class OnlineTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.original=onda.DATA;onda.DATA=Path(self.temp.name);onda.init()
+        self.temp=tempfile.TemporaryDirectory();self.original=onda.DATA;onda.DATA=Path(self.temp.name);onda.TURSO=None;onda.init()
         self.server=onda.ThreadingHTTPServer(('127.0.0.1',0),onda.Handler);self.port=self.server.server_port
         threading.Thread(target=self.server.serve_forever,daemon=True).start()
         self.client=self.register('one');self.other=self.register('two');self.old_provider=onda.provider;onda.provider=MusicProvider()

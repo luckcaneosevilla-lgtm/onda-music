@@ -101,6 +101,8 @@ Las consultas y asociaciones de biblioteca verifican propietario. El administrad
 
 `data/onda.sqlite` guarda cuentas, sesiones y referencias; `data/audio/` conserva archivos locales. Detén IVOX antes de copiar **toda** la carpeta `data` como copia coherente. Protege su acceso en Windows y no la publiques. `ONDA_DATA` permite una ruta privada alternativa.
 
+Con `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN` definidas, cuentas, sesiones, playlists y guardados viven en Turso (SQLite en la nube) y sobreviven a reinicios del contenedor; todos los dispositivos ven los mismos datos. Sin ellas se usa `data/onda.sqlite`. La caché de URLs de audio sigue en local y los archivos importados siguen en `data/audio/`, que no se sincroniza. `python scripts/migrate_to_turso.py` copia una base local existente a Turso sin sobrescribir filas.
+
 La migración añade tablas y convierte referencias antiguas de YouTube a referencias de Piped con el mismo identificador, conservando favoritos y playlists. No borra cuentas, archivos ni asociaciones locales.
 
 ## Variables y despliegue privado
