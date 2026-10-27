@@ -1,0 +1,52 @@
+name: onda-piped
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: onda_piped
+      POSTGRES_USER: onda_piped
+      POSTGRES_PASSWORD: ${PIPED_DB_PASSWORD:?Run python scripts/setup_piped.py first}
+    volumes:
+      - piped_database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U onda_piped -d onda_piped"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  piped:
+    image: 1337kavin/piped:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      HTTP_WORKERS: "2"
+      API_URL: http://127.0.0.1:8080
+      FRONTEND_URL: http://127.0.0.1:8765
+      PROXY_PART: http://127.0.0.1:8081
+      DISABLE_REGISTRATION: "true"
+      DISABLE_TIMERS: "true"
+      DISABLE_PUBSUB: "true"
+      DISABLE_RYD: "true"
+      DISABLE_LBRY: "true"
+      BG_HELPER_URL: http://bg-helper:3000
+      HIBERNATE__CONNECTION__URL: jdbc:postgresql://db:5432/onda_piped
+      HIBERNATE__CONNECTION__DRIVER_CLASS: org.postgresql.Driver
+      HIBERNATE__CONNECTION__USERNAME: onda_piped
+      HIBERNATE__CONNECTION__PASSWORD: ${PIPED_DB_PASSWORD:?Run python scripts/setup_piped.py first}
+    ports:
+      - "127.0.0.1:8080:8080"
+  proxy:
+    image: 1337kavin/piped-proxy:latest
+    restart: unless-stopped
+    environment:
+      BIND: 0.0.0.0:8080
+    ports:
+      - "127.0.0.1:8081:8080"
+  bg-helper:
+    image: 1337kavin/bg-helper-server:latest
+    restart: unless-stopped
+volumes:
+  piped_database:

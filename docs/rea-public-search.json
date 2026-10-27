@@ -1,0 +1,7 @@
+{
+  "browser": {"mode": "launch", "executable_path": "C:\\Users\\luck_\\AppData\\Local\\ms-playwright\\chromium-1248\\chrome-win64\\chrome.exe", "headless": true},
+  "start_url": {"url": "https://open.spotify.com/search/Feid", "query": []},
+  "actions": [{"step_id": "settle", "action": "wait_for_timeout", "duration_ms": 4000}],
+  "environment": {"viewport": {"width": 1280, "height": 850}, "locale": "es-ES", "timezone": "Atlantic/Canary", "color_scheme": "dark"},
+  "capture": {"at_end": ["dom", "screenshot", "url"], "events": ["page-errors"]}
+}

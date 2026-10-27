@@ -1,0 +1,47 @@
+{
+  "evidence_id": "ev_3e6c7d95dd5ac756dca59381e5ee70a03b9c6735abd6d6d280ed6d50220896af",
+  "operation": "capture_browser_scenario",
+  "duration_ms": 16529,
+  "steps": [
+    {
+      "step_id": "scenario_start",
+      "status": "completed",
+      "url": {
+        "url": "https://open.spotify.com/search/Feid",
+        "origin": "https://open.spotify.com",
+        "query_parameter_names": [],
+        "redacted": false
+      },
+      "completeness": {
+        "status": "complete",
+        "equality_eligible": true,
+        "missing_sections": [],
+        "truncated_sections": []
+      }
+    },
+    {
+      "step_id": "settle",
+      "status": "completed",
+      "url": {
+        "url": "https://open.spotify.com/search/Feid",
+        "origin": "https://open.spotify.com",
+        "query_parameter_names": [],
+        "redacted": false
+      },
+      "completeness": {
+        "status": "complete",
+        "equality_eligible": true,
+        "missing_sections": [],
+        "truncated_sections": []
+      }
+    }
+  ],
+  "limitations": [
+    "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
+    "Network content is retained only when selected; response bytes are browser-decoded, not compressed wire bytes.",
+    "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+    "Network content reads settle within 5 seconds each and never wait for unfinished responses or refetch them.",
+    "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
+    "Storage values are hashed only after declared-secret redaction."
+  ]
+}

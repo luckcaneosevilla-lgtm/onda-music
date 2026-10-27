@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000"><title>ONDA · Tu música, a tu ritmo</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ONDA">
+  <link rel="apple-touch-icon" href="/icon-192x192.png">
+  <link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/online.css"><link rel="stylesheet" href="/player.css">
+  <script src="/app.js" defer></script><script src="/online.js" defer></script>
+</head>
+<body>
+  <div id="app"></div><div id="notice" role="status" aria-live="polite"></div>
+  <aside id="online-player" aria-label="Reproductor de audio" hidden>
+    <div class="player-heading"><div><small id="online-source">Audio online</small><strong id="online-playing">Elige una canción</strong></div><button id="close-online" aria-label="Detener y cerrar reproductor">×</button></div>
+    <audio id="online-audio" controls preload="metadata"></audio>
+    <div class="tools"><button id="online-previous" aria-label="Canción anterior">←</button><button id="online-next">Siguiente →</button><button id="queue-toggle" aria-expanded="false" aria-controls="online-queue">Ver cola</button></div>
+    <p id="playback-status" role="status">Elige una canción.</p><div id="external-playback"></div>
+    <ol id="online-queue" hidden></ol>
+  </aside>
+  <footer id="player" hidden><span id="playing">Elige una canción</span><button id="previous" aria-label="Canción anterior">←</button><audio id="audio" controls preload="metadata"></audio><button id="next" aria-label="Canción siguiente">→</button></footer>
+  <dialog id="dialog"></dialog>
+  <script src="/pwa.js"></script>
+</body>
+</html>
