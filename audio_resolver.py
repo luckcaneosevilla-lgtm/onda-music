@@ -40,7 +40,9 @@ print("ready",flush=True)
 for line in sys.stdin:
     parts=line.strip().split();video_id=parts[0] if parts else '';url=None;engine='yt-dlp-fast'
     if re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
-        if len(parts)==1 and os.environ.get('IVOX_YTDLP_FAST','1')!='0':
+        # Off by default: with yt-dlp 2026.10.26 the skip-webpage extraction failed on every
+        # tested song and only added ~0.1 s before the compatible path. IVOX_YTDLP_FAST=1 re-enables it.
+        if len(parts)==1 and os.environ.get('IVOX_YTDLP_FAST','0')=='1':
             try:url=fast.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
             except Exception:pass
         if not url:

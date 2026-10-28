@@ -11,6 +11,7 @@ import http.client
 import json
 import sqlite3
 import threading
+import time
 from urllib.parse import urlparse
 
 WRITES = ('INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'CREATE', 'DROP', 'ALTER')
@@ -19,7 +20,6 @@ PRAGMA = {'sql': 'PRAGMA foreign_keys=ON'}
 # One writer at a time inside this process mirrors SQLite's local write lock and
 # keeps concurrent requests from failing with SQLITE_BUSY on the remote primary.
 write_lock = threading.RLock()
-local = threading.local()
 
 def encode(value):
     if value is None: return {'type': 'null'}
@@ -65,24 +65,47 @@ class Client:
         self.host = parsed.netloc; self.secure = parsed.scheme == 'https'
         self.headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}
 
-    def http(self):
-        # Keep-alive per thread: a TLS handshake per query would dominate latency.
-        conn = getattr(local, 'conn', None)
-        if conn is None or getattr(local, 'host', None) != self.host:
-            factory = http.client.HTTPSConnection if self.secure else http.client.HTTPConnection
-            conn = local.conn = factory(self.host, timeout=30); local.host = self.host
-        return conn
+        # The HTTP server starts a thread per request, so per-thread connections paid a
+        # ~0.5 s TLS handshake on almost every API call. Warm connections are pooled
+        # and shared instead; idle ones are dropped before the server can close them.
+        self.pool = []; self.pool_guard = threading.Lock()
+
+    IDLE_SECONDS = 20
+    POOL_SIZE = 8
+
+    def acquire(self, fresh=False, idle=IDLE_SECONDS):
+        if not fresh:
+            stamp = time.monotonic()
+            with self.pool_guard:
+                while self.pool:
+                    conn, used = self.pool.pop()
+                    if stamp - used < idle: return conn
+                    conn.close()
+        factory = http.client.HTTPSConnection if self.secure else http.client.HTTPConnection
+        return factory(self.host, timeout=30)
+
+    def release(self, conn):
+        with self.pool_guard:
+            if len(self.pool) < self.POOL_SIZE: self.pool.append((conn, time.monotonic())); return
+        conn.close()
+
+    def warm(self):
+        """Open one connection ahead of the first request (TLS handshake off the hot path)."""
+        try: self.pipeline([{'type': 'execute', 'stmt': {'sql': 'SELECT 1'}}, {'type': 'close'}])
+        except sqlite3.Error: pass
 
     def pipeline(self, requests, baton=None):
         body = json.dumps({'baton': baton, 'requests': requests})
         for attempt in (0, 1):
-            conn = self.http()
+            # Inside a transaction a retry is unsafe, so it never rides a possibly stale socket.
+            conn = self.acquire(fresh=attempt > 0, idle=5 if baton else self.IDLE_SECONDS)
             try:
                 conn.request('POST', '/v2/pipeline', body, self.headers)
                 response = conn.getresponse(); raw = response.read()
+                self.release(conn)
                 break
             except (OSError, http.client.HTTPException):
-                conn.close(); local.conn = None
+                conn.close()
                 # Retrying is only safe when no server-side transaction is in flight.
                 if attempt or baton: raise sqlite3.OperationalError('No se pudo contactar con Turso.')
         if response.status != 200:

@@ -9,7 +9,7 @@ let audioQueue=[],audioIndex=-1,playVersion=0,recordedReference=null,advanceTime
 // One controller per playback: changing song aborts every request of the previous one.
 let playController=null,skipTimer=null,watchdog,failStreak=0,audioUnlocked=false,resumeAt=0,fixingDuration=false;
 let playbackWanted=false,stallTimer=null,recoveryAttempts=0,lastPlaybackTime=0,recoveryInFlight=false;
-let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioFor=null,radioPromise=null;
+let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),radioPromise=null,queueFinished=false,nearEnd=false,loadingSince=0;
 const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`;
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
 const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id);
@@ -49,9 +49,21 @@ async function localAudio(item){
 function forgetAudio(item){cachedIds.delete(item.id);if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.delete(audioKey(item.id))).catch(()=>{})}
 // Resolving a YouTube audio URL takes ~1-2 s; doing it before the tap (top results,
 // hover, touch, the next songs in the queue) makes Play start almost instantly.
-const prefetched=new Map();
+const prefetched=new Map(),prefetchedReset=v=>{if(v)prefetched.delete(v.provider_id)};
+// On phones there is no hover and a tap gives ~0.1 s of warning, so songs are
+// prepared while they sit on screen: a row visible for 0.6 s joins the next batch.
+const visibleRows=new Map(),visiblePrefetch='IntersectionObserver' in window?new IntersectionObserver(entries=>{
+  for(const e of entries){
+    const id=e.target.dataset.video;
+    if(e.isIntersecting&&!visibleRows.has(e.target))visibleRows.set(e.target,setTimeout(()=>{visibleRows.delete(e.target);visiblePrefetch.unobserve(e.target);if(e.target.isConnected)queueVisible(id)},600));
+    else if(!e.isIntersecting&&visibleRows.has(e.target)){clearTimeout(visibleRows.get(e.target));visibleRows.delete(e.target)}
+  }
+},{threshold:.6}):{observe(){},unobserve(){}};
+let visibleBatch=[],visibleTimer=0;
+function queueVisible(id){const v=videoById(id);if(!v)return;visibleBatch.push(v);clearTimeout(visibleTimer);visibleTimer=setTimeout(()=>{const batch=visibleBatch;visibleBatch=[];for(let i=0;i<batch.length;i+=5)prefetchAudio(batch.slice(i,i+5))},150)}
 function prefetchAudio(items){const now=Date.now();for(const [id,until] of prefetched)if(until<=now)prefetched.delete(id);const ids=items.filter(v=>v&&v.provider==='piped'&&!prefetched.has(v.provider_id)&&!cachedIds.has(v.id)).slice(0,5).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.set(id,now+30000));api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
 function playerState(state){
+  if(state==='loading'&&$('#online-player').dataset.state!=='loading')loadingSince=Date.now();
   $('#online-player').dataset.state=state;const playing=state==='playing';
   $('#np-toggle').setAttribute('aria-label',playing?'Pausar':'Reproducir');
   if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':state==='paused'?'paused':'none';
@@ -72,27 +84,111 @@ async function downloadOnline(v){
   const link=document.createElement('a');link.href=url+(url.includes('?')?'&':'?')+'download='+encodeURIComponent(name);link.download='';
   document.body.append(link);link.click();link.remove();
 }
-window.cancelOnlineSearch=()=>{searchController?.abort();searchVersion++;searchView.loading=false};
+window.cancelOnlineSearch=()=>{closeSuggest();searchController?.abort();searchVersion++;searchView.loading=false};
 const openLink=link=>link.onclick=e=>{e.preventDefault();history.pushState({},'',link.getAttribute('href'));render().catch(e=>notify(e.message))};
 
-async function onlineState(){const [status,data]=await Promise.all([api('/api/online/status'),api('/api/online/library')]);onlineStatus=status;onlineData=data}
+async function onlineState(){const [status,data]=await Promise.all([api('/api/online/status'),api('/api/online/library')]);onlineStatus=status;onlineData=data;onlineLoaded=true}
+// Pages open instantly with the last known library; a background refresh redraws them.
+let onlineLoaded=false,onlineRefresh=null;
+function refreshOnline(redraw){onlineRefresh??=onlineState().finally(()=>{onlineRefresh=null});onlineRefresh.then(()=>{if(me)redraw()},()=>{})}
+async function ensureOnline(redraw){if(onlineLoaded)refreshOnline(redraw);else await(onlineRefresh??=onlineState().finally(()=>{onlineRefresh=null}))}
+window.preloadOnline=()=>{if(!onlineLoaded)refreshOnline(()=>{})};
 async function discover(){
-  await onlineState();if(location.pathname!=='/'||!me)return;
+  await ensureOnline(()=>{if(location.pathname==='/')drawRecent()});if(location.pathname!=='/'||!me)return;
   shell(`<div class="discover-heading"><p class="muted">Tu próxima canción está ahí fuera</p><h1>¿Qué quieres escuchar?</h1><p>Busca un artista, una canción o algo que cambie tu día.</p></div>
-    <form id="online-search" class="online-search" role="search"><label class="sr-only" for="online-query">Buscar música online</label><input id="online-query" name="q" type="search" maxlength="120" minlength="2" placeholder="Artista o canción, por ejemplo Feid" value="${esc(searchView.query)}" required autocomplete="off"><button class="primary">Buscar</button></form>
+    <form id="online-search" class="online-search" role="search"><label class="sr-only" for="online-query">Buscar música online</label><input id="online-query" name="q" type="search" maxlength="120" minlength="2" placeholder="Artista o canción, por ejemplo Feid" value="${esc(searchView.query)}" required autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false"><button class="primary">Buscar</button><div id="suggest" class="suggest" role="listbox" aria-label="Sugerencias" hidden></div></form>
     <div class="search-options"><label>Buscar<select id="search-filter"><option value="songs">Canciones</option><option value="artists">Artistas</option></select></label><label>Fuente<select id="search-source"><option value="auto">Catálogo musical · automático</option><option value="ytmusic">YouTube Music</option><option value="youtube">YouTube · respaldo</option><option value="piped">Piped</option><option value="audius">Audius · independiente</option></select></label><span class="muted">Audio online · Tus listas privadas en IVOX</span></div>
     <div class="recent-heading"><h2>Búsquedas recientes</h2>${onlineData.recent.length?'<button id="clear-recent">Borrar</button>':''}</div><div id="recent-searches" class="tools"></div>
     <div class="quick-access"><a href="/library" data-nav>♡ Tus favoritos</a><a href="/library?section=later" data-nav>◷ Escuchar después</a><a href="/library?section=playlists" data-nav>♫ Tus playlists</a></div>
     <section aria-label="Resultados de búsqueda"><div id="search-results" aria-live="polite"></div></section><p class="provider-note">La fuente aparece en cada resultado. La disponibilidad y las versiones publicadas dependen de cada proveedor.</p>`);
   $('#search-source').value=searchView.source;
   $('#search-filter').value=searchView.filter||'songs';
-  $('#online-search').onsubmit=e=>{e.preventDefault();runSearch($('#online-query').value,false,$('#search-source').value)};
-  $('#online-query').oninput=()=>{cancelOnlineSearch();searchView.error=null;$('#search-results').innerHTML='<p class="muted">Pulsa Buscar para consultar el catálogo online.</p>'};
+  $('#online-search').onsubmit=e=>{e.preventDefault();closeSuggest();runSearch($('#online-query').value,false,$('#search-source').value)};
+  $('#online-query').oninput=onSuggestInput;$('#online-query').onkeydown=suggestKeys;
+  $('#online-query').onfocus=()=>{
+    // On phones the field sits mid-screen: lift it so the suggestions have room above the keyboard.
+    const top=$('#online-search').getBoundingClientRect().top,header=Math.max(0,$('.sidebar')?.getBoundingClientRect().bottom||0);
+    if(matchMedia('(max-width: 640px)').matches&&top>innerHeight*.3)scrollBy({top:top-header-12});
+    if($('#online-query').value.trim()&&$('#suggest').hidden)onSuggestInput();
+  };
+  // Keep focus in the field while an option is pressed, so the click lands.
+  $('#suggest').onpointerdown=e=>e.preventDefault();
   $('#search-source').onchange=()=>{cancelOnlineSearch();searchView.source=$('#search-source').value;if(['piped','audius'].includes(searchView.source))$('#search-filter').value='songs'};
   $('#search-filter').onchange=()=>{cancelOnlineSearch();if($('#search-filter').value==='artists'&&['piped','audius'].includes($('#search-source').value))$('#search-source').value='auto'};
-  if($('#clear-recent'))$('#clear-recent').onclick=()=>perform(async()=>{await api('/api/online/recent','DELETE');await discover()});drawRecent();drawSearch();
+  bindClearRecent();drawRecent();drawSearch();
 }
-function drawRecent(){const el=$('#recent-searches');if(!el)return;el.innerHTML=onlineData.recent.length?onlineData.recent.map(q=>`<button data-recent="${esc(q)}">${esc(q)}</button>`).join(''):'<p class="muted">Tus búsquedas aparecerán aquí.</p>';el.querySelectorAll('button').forEach(b=>b.onclick=()=>{$('#online-query').value=b.dataset.recent;runSearch(b.dataset.recent,false,$('#search-source').value)})}
+// ---- Typeahead ---------------------------------------------------------------
+// For people who only remember part of a name: the listener's own songs appear at once,
+// then YouTube Music's artists, songs and completions (~0.1-0.3 s). A song plays on tap
+// (the radio continues after it) and the top one is prefetched while the user decides.
+let suggestTimer=0,prefetchTimer=0,suggestController=null,suggestSeq=0,suggestActive=-1,suggestOptions=[];
+const fold=v=>String(v||'').normalize('NFKD').replace(/\p{M}/gu,'').toLowerCase();
+function closeSuggest(){clearTimeout(suggestTimer);clearTimeout(prefetchTimer);suggestController?.abort();suggestSeq++;const box=$('#suggest');if(box){box.hidden=true;box.innerHTML=''}const input=$('#online-query');if(input){input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant')}suggestActive=-1;suggestOptions=[]}
+function localMatches(q){
+  const f=fold(q);if(f.length<2)return [];const seen=new Set();
+  return Object.values(onlineData.items).filter(v=>v.available!==false&&!seen.has(v.id)&&(fold(v.title).includes(f)||fold(v.channel).includes(f))&&seen.add(v.id)).slice(0,3);
+}
+function onSuggestInput(){
+  const q=$('#online-query').value.trim();clearTimeout(suggestTimer);clearTimeout(prefetchTimer);suggestController?.abort();
+  if(!q){closeSuggest();return}
+  drawSuggest(null,q);suggestTimer=setTimeout(()=>fetchSuggest(q,false),120);
+}
+async function fetchSuggest(q,deep){
+  const seq=++suggestSeq;suggestController=new AbortController();
+  try{
+    const r=await api('/api/online/suggest?q='+encodeURIComponent(q)+(deep?'&deep=1':''),'GET',undefined,{signal:suggestController.signal});
+    if(seq!==suggestSeq||$('#online-query')?.value.trim()!==q)return;
+    drawSuggest(r,q);
+    if(r.songs.length)prefetchTimer=setTimeout(()=>prefetchAudio(r.songs.slice(0,2)),deep?0:300);
+    if(!deep&&r.songs.length<2&&q.length>=3)suggestTimer=setTimeout(()=>fetchSuggest(q,true),350);
+  }catch(e){if(e.name!=='AbortError'&&seq===suggestSeq)drawSuggest({queries:[],artists:[],songs:[]},q)}
+}
+function drawSuggest(r,q){
+  const box=$('#suggest');if(!box)return;
+  // Bold the typed part when it maps 1:1 onto the original text (accents folded).
+  const mark=text=>{const t=String(text||''),f=fold(t),i=f.indexOf(fold(q));return i<0||f.length!==t.length?esc(t):esc(t.slice(0,i))+'<b>'+esc(t.slice(i,i+q.length))+'</b>'+esc(t.slice(i+q.length))};
+  const local=localMatches(q),have=new Set(local.map(v=>v.id));
+  const songs=(r?.songs||[]).filter(v=>!have.has(v.id)),artists=r?.artists||[],queries=(r?.queries||[]).filter(x=>fold(x)!==fold(q)).slice(0,5);
+  suggestOptions=[{kind:'query',value:q},...local.map(v=>({kind:'song',value:v})),...artists.map(a=>({kind:'artist',value:a})),...songs.map(v=>({kind:'song',value:v})),...queries.map(x=>({kind:'query',value:x}))];
+  const art=(src,round)=>`<span class="suggest-art${round?' round':''}">${src?`<img src="${esc(src)}" alt="" loading="lazy" width="44" height="44">`:'♫'}</span>`;
+  const row=(i,inner)=>`<div class="suggest-option" role="option" id="suggest-${i}" data-suggest="${i}" aria-selected="${i===suggestActive}">${inner}</div>`;
+  const song=v=>`${art(v.thumbnail)}<span class="suggest-text"><strong>${mark(v.title)}</strong><small>${mark(v.channel)}</small></span><span class="suggest-play" aria-hidden="true">▶</span>`;
+  let i=0,html=row(i++,`<span class="suggest-art icon" aria-hidden="true">⌕</span><span class="suggest-text"><strong>Buscar «${esc(q)}»</strong></span>`);
+  const section=(title,list,draw)=>{if(list.length){html+=`<p class="suggest-head">${title}</p>`;for(const item of list)html+=row(i++,draw(item))}};
+  section('Tu música',local,song);
+  section('Artistas',artists,a=>`${art(a.thumbnail,true)}<span class="suggest-text"><strong>${mark(a.name)}</strong><small>Artista</small></span>`);
+  section('Canciones',songs,song);
+  section('Búsquedas',queries,x=>`<span class="suggest-art icon" aria-hidden="true">⌕</span><span class="suggest-text"><span>${mark(x)}</span></span>`);
+  if(!r)html+='<p class="suggest-head suggest-wait" role="status">Buscando sugerencias…</p>';
+  box.innerHTML=html;box.hidden=false;$('#online-query').setAttribute('aria-expanded','true');
+  // Fit above the on-screen keyboard and the phone tab bar.
+  const view=window.visualViewport?.height||innerHeight,bar=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tabbar'))||0;
+  box.style.maxHeight=Math.max(200,Math.min(520,view-box.getBoundingClientRect().top-bar-12))+'px';
+  box.querySelectorAll('[data-suggest]').forEach(el=>el.onclick=()=>pickSuggest(Number(el.dataset.suggest)));
+}
+function pickSuggest(i){
+  const option=suggestOptions[i];if(!option)return;closeSuggest();
+  if(option.kind==='query'){$('#online-query').value=option.value;runSearch(option.value,false,$('#search-source').value);return}
+  if(option.kind==='artist'){history.pushState({},'','/artist/'+option.value.id);render().catch(e=>notify(e.message));return}
+  // A suggested song plays at once; autoplay radio keeps similar music coming after it.
+  const v=option.value;if(!onlineData.items[v.id])onlineData.items[v.id]=v;playList([v]);
+}
+function suggestKeys(e){
+  const box=$('#suggest');
+  if(e.key==='Escape'&&box&&!box.hidden){e.preventDefault();closeSuggest();return}
+  if(!box||box.hidden||!suggestOptions.length)return;
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+    // -1 is the text field itself; the list wraps around through it.
+    e.preventDefault();const n=suggestOptions.length+1;suggestActive=((suggestActive+1+(e.key==='ArrowDown'?1:-1))%n+n)%n-1;
+    box.querySelectorAll('[data-suggest]').forEach(el=>el.setAttribute('aria-selected',String(Number(el.dataset.suggest)===suggestActive)));
+    const input=$('#online-query');
+    if(suggestActive>=0){input.setAttribute('aria-activedescendant','suggest-'+suggestActive);$('#suggest-'+suggestActive)?.scrollIntoView({block:'nearest'});const o=suggestOptions[suggestActive];if(o.kind==='song')prefetchAudio([o.value])}
+    else input.removeAttribute('aria-activedescendant');
+  }else if(e.key==='Enter'&&suggestActive>=0){e.preventDefault();pickSuggest(suggestActive)}
+}
+document.addEventListener('pointerdown',e=>{if(!e.target.closest('#online-search'))closeSuggest()});
+function bindClearRecent(){if($('#clear-recent'))$('#clear-recent').onclick=()=>perform(async()=>{await api('/api/online/recent','DELETE');onlineData.recent=[];drawRecent()})}
+function drawRecent(){const el=$('#recent-searches');if(!el)return;const head=$('.recent-heading');if(head&&!$('#clear-recent')!==!onlineData.recent.length){head.innerHTML='<h2>Búsquedas recientes</h2>'+(onlineData.recent.length?'<button id="clear-recent">Borrar</button>':'');bindClearRecent()}el.innerHTML=onlineData.recent.length?onlineData.recent.map(q=>`<button data-recent="${esc(q)}">${esc(q)}</button>`).join(''):'<p class="muted">Tus búsquedas aparecerán aquí.</p>';el.querySelectorAll('button').forEach(b=>b.onclick=()=>{$('#online-query').value=b.dataset.recent;runSearch(b.dataset.recent,false,$('#search-source').value)})}
 
 // Artist profiles. "34.5M" from YouTube Music reads as "34,5 M" in Spanish.
 function count(value){
@@ -110,7 +206,7 @@ function artistSections(a,full=false){
   return `${a.songs?.length?`<h3 class="section-title">Populares</h3><div class="top-songs">${videoCards(a.songs)}</div>`:''}${related}${about}`;
 }
 function bindArtist(root,a){
-  const play=(list,shuffle=false)=>{if(!list.length)return;audioQueue=shuffle?[...list].sort(()=>Math.random()-.5):[...list];audioIndex=0;failedReferences.clear();radioFor=null;startOnline()};
+  const play=(list,shuffle=false)=>playList(list,0,shuffle);
   root.querySelectorAll('[data-artist-play]').forEach(b=>b.onclick=()=>play(a.songs||[]));
   root.querySelectorAll('[data-artist-shuffle]').forEach(b=>b.onclick=()=>play(a.songs||[],true));
   // Artist radio: the most popular song seeds an endless mix of similar music.
@@ -158,7 +254,7 @@ async function artistPage(){
   const el=$('.content');
   if(!/^UC[\w-]{22}$/.test(id)){el.innerHTML='<div class="empty"><h2>Artista no encontrado</h2><a href="/" class="text-link" data-artist-open>Descubrir música</a></div>';el.querySelectorAll('[data-artist-open]').forEach(openLink);return}
   try{
-    const [{artist}]=await Promise.all([api('/api/online/artist/'+id),onlineState()]);
+    const [{artist}]=await Promise.all([api('/api/online/artist/'+id),ensureOnline(()=>{})]);
     if(location.pathname!=='/artist/'+id)return;
     artistView=artist;el.innerHTML=artistHero(artist,true)+artistSections(artist,true);bindArtist(el,artist);document.title=artist.name+' · IVOX';
   }catch(e){if(location.pathname==='/artist/'+id)el.innerHTML=`<div class="empty error-state"><h2>No se pudo cargar el artista</h2><p>${esc(e.message)}</p></div>`}
@@ -170,13 +266,14 @@ function videoCards(items,playlist=null){
 function bindVideoCards(root,items,playlist=null){
   if(!root)return;
   root.querySelectorAll('[data-discover]').forEach(a=>a.onclick=e=>{e.preventDefault();history.pushState({},'','/');render().catch(e=>notify(e.message))});
-  root.querySelectorAll('[data-online-play]').forEach(b=>b.onclick=()=>{const id=b.dataset.onlinePlay;if(audioQueue[audioIndex]?.id===id&&!$('#online-player').hidden){toggleOnline();return}audioQueue=[...items];audioIndex=items.findIndex(v=>v.id===id);failedReferences.clear();radioFor=null;startOnline()});
+  root.querySelectorAll('[data-online-play]').forEach(b=>b.onclick=()=>{const id=b.dataset.onlinePlay;if(audioQueue[audioIndex]?.id===id&&!$('#online-player').hidden){toggleOnline();return}playList(items,items.findIndex(v=>v.id===id))});
   // pointerdown fires ~100-300 ms before click: one more head start for the resolver.
   root.querySelectorAll('.video-row[data-video]').forEach(row=>{const warm=()=>prefetchAudio([videoById(row.dataset.video)]);row.addEventListener('pointerenter',warm,{once:true});row.addEventListener('pointerdown',warm,{once:true,passive:true})});
   if(root.querySelector('.video-row'))prefetchAudio(items.slice(0,5));syncCards();
+  root.querySelectorAll('.video-row[data-video]').forEach(row=>visiblePrefetch.observe(row));
   root.querySelectorAll('[data-online-fav]').forEach(b=>b.onclick=()=>perform(()=>setFavorite(videoById(b.dataset.onlineFav),!savedVideo(b.dataset.onlineFav).favorite,b)));
   root.querySelectorAll('[data-online-menu]').forEach(b=>b.onclick=()=>onlineOptions(videoById(b.dataset.onlineMenu)));
-  root.querySelectorAll('[data-online-remove]').forEach(b=>b.onclick=()=>perform(async()=>{await api('/api/online/playlists/'+playlist+'/items','DELETE',{video_id:b.dataset.onlineRemove});await onlineLibrary()}));
+  root.querySelectorAll('[data-online-remove]').forEach(b=>b.onclick=()=>perform(async()=>{await api('/api/online/playlists/'+playlist+'/items','DELETE',{video_id:b.dataset.onlineRemove});await onlineLibrary(true)}));
 }
 // Favorites update in place everywhere (rows, mini player, Now Playing) without re-rendering the page.
 async function setFavorite(v,value,origin){
@@ -193,10 +290,8 @@ function externalLink(v){if(v.provider==='piped'&&onlineStatus?.allow_youtube_ex
 function onlineOptions(v){
   if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="play-next">Reproducir a continuación</button><button id="enqueue">Añadir a la cola</button>${v.provider==='piped'?'<button id="start-radio">◉ Iniciar radio de esta canción</button>':''}<button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button><button id="download-online">Descargar</button>${externalLink(v)}</div>`);
   $('#download-online').onclick=()=>{dialog.close();perform(()=>downloadOnline(v))};
-  const queueAt=position=>{if(audioIndex<0){audioQueue=[v];audioIndex=0;startOnline();return}audioQueue.splice(position,0,{...v,radio:false});drawQueue();prefetchNext()};
-  $('#play-next').onclick=()=>{queueAt(audioIndex+1);dialog.close();notify('Sonará a continuación.')};
-  // Songs you add go before the automatic radio songs.
-  $('#enqueue').onclick=()=>{const radio=audioQueue.findIndex((x,i)=>i>audioIndex&&x.radio);queueAt(radio<0?audioQueue.length:radio);dialog.close();notify('Añadido a la cola.')};
+  $('#play-next').onclick=()=>{dialog.close();notify(enqueue([v],true)?'Reproduciendo «'+v.title+'».':'Sonará a continuación.')};
+  $('#enqueue').onclick=()=>{dialog.close();notify(enqueue([v])?'Reproduciendo «'+v.title+'».':'Añadido a la cola.')};
   if($('#start-radio'))$('#start-radio').onclick=()=>{dialog.close();startRadio(v)};
   $('#save-later').onclick=()=>perform(async()=>{await api('/api/online/items/'+v.id,'PATCH',{later:!s.later});onlineData=await api('/api/online/library');dialog.close();if(location.pathname==='/library')drawOnlineLibrary();notify(s.later?'Quitado de escuchar después.':'Guardado para escuchar después.')});$('#to-playlist').onclick=()=>pickOnlinePlaylist(v);
 }
@@ -205,19 +300,20 @@ function pickOnlinePlaylist(v){
   if(onlineData.playlists.length)$('#online-pick').onsubmit=e=>{e.preventDefault();perform(async()=>{await api('/api/online/playlists/'+new FormData(e.target).get('playlist')+'/items','POST',{video_id:v.id});onlineData=await api('/api/online/library');dialog.close();notify('Guardado en tu playlist.');if(location.pathname==='/library')drawOnlineLibrary()})};
   $('#create-for-video').onclick=()=>textForm('Nueva playlist','Nombre',async name=>{const p=await api('/api/playlists','POST',{name});await api('/api/online/playlists/'+p.id+'/items','POST',{video_id:v.id});onlineData=await api('/api/online/library');notify('Playlist creada y referencia guardada.');if(location.pathname==='/library')drawOnlineLibrary()});
 }
-async function onlineLibrary(){
-  await onlineState();if(location.pathname!=='/library'||!me)return;const section=new URLSearchParams(location.search).get('section');if(section)onlineSection=section;
+async function onlineLibrary(fresh=false){
+  if(fresh)await onlineState();else await ensureOnline(()=>{if(location.pathname==='/library')drawOnlineLibrary()});if(location.pathname!=='/library'||!me)return;const section=new URLSearchParams(location.search).get('section');if(section)onlineSection=section;
   shell(`<div class="topline"><div><p class="muted">Tu espacio en IVOX</p><h1>Mi biblioteca</h1><p>Guarda lo que te mueve. Escúchalo desde cualquier dispositivo.</p></div><button id="new-online-playlist" class="primary">Nueva playlist</button></div><div class="library-tabs" role="group" aria-label="Colecciones"><button data-section="favorites">♡ Favoritos</button><button data-section="later">◷ Escuchar después</button><button data-section="history">Historial</button><button data-section="playlists">Playlists</button></div><div id="online-library-content"></div><p class="provider-note">Referencias privadas de IVOX. No descargamos archivos a tu biblioteca.</p>`);
-  $('#new-online-playlist').onclick=()=>textForm('Nueva playlist','Nombre',async name=>{const p=await api('/api/playlists','POST',{name});onlineSection=p.id;history.replaceState({},'','/library');await onlineLibrary()});document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{onlineSection=b.dataset.section;history.replaceState({},'','/library');drawOnlineLibrary()});drawOnlineLibrary();
+  $('#new-online-playlist').onclick=()=>textForm('Nueva playlist','Nombre',async name=>{const p=await api('/api/playlists','POST',{name});onlineSection=p.id;history.replaceState({},'','/library');await onlineLibrary(true)});document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{onlineSection=b.dataset.section;history.replaceState({},'','/library');drawOnlineLibrary()});drawOnlineLibrary();
 }
 function drawOnlineLibrary(){
   const el=$('#online-library-content');if(!el)return;document.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.section===onlineSection)));
   if(onlineSection==='playlists'){el.innerHTML=`<h2>Tus playlists</h2><div class="playlist-grid">${onlineData.playlists.map(p=>`<button class="playlist-card" data-playlist="${p.id}"><span aria-hidden="true">≋</span><strong>${esc(p.name)}</strong><small>${p.tracks.length} canciones online</small></button>`).join('')||'<p class="muted">Crea una playlist para reunir tus canciones.</p>'}</div>`;el.querySelectorAll('[data-playlist]').forEach(b=>b.onclick=()=>{onlineSection=b.dataset.playlist;drawOnlineLibrary()});return}
-  const playlist=onlineData.playlists.find(p=>p.id===onlineSection),ids=playlist?playlist.tracks:onlineData.saves.filter(s=>onlineSection==='history'?s.last_played:onlineSection==='later'?s.later:s.favorite).map(s=>s.video_id),items=ids.map(id=>onlineData.items[id]).filter(Boolean);
+  const playlist=onlineData.playlists.find(p=>p.id===onlineSection),ids=playlist?playlist.tracks:onlineData.saves.filter(s=>onlineSection==='history'?s.last_played:onlineSection==='later'?s.later:s.favorite).map(s=>s.video_id),items=ids.map(id=>onlineData.items[id]).filter(Boolean),playable=items.filter(v=>v.available!==false);
   const title=playlist?playlist.name:onlineSection==='history'?'Historial de reproducción':onlineSection==='later'?'Escuchar después':'Favoritos de IVOX';
-  el.innerHTML=`<div class="topline"><h2>${esc(title)}</h2>${playlist?'<div class="tools"><button id="rename-online">Renombrar</button><button id="delete-online" class="danger">Eliminar playlist</button></div>':onlineSection==='history'?'<button id="clear-history">Borrar historial</button>':''}</div><div id="library-videos">${videoCards(items,playlist?.id)}</div>`;bindVideoCards(el,items,playlist?.id);
-  if(playlist){$('#rename-online').onclick=()=>textForm('Renombrar playlist','Nombre',async name=>{await api('/api/playlists/'+playlist.id,'PATCH',{name});await onlineLibrary()},playlist.name);$('#delete-online').onclick=()=>confirmAction('¿Eliminar esta playlist?','Se eliminan sus referencias online y asociaciones locales. Los archivos de biblioteca y el contenido del proveedor no se borran.',async()=>{await api('/api/playlists/'+playlist.id,'DELETE');onlineSection='playlists';await onlineLibrary()})}
-  if($('#clear-history'))$('#clear-history').onclick=()=>confirmAction('¿Borrar tu historial?','Solo se elimina el historial de IVOX.',async()=>{await api('/api/online/history','DELETE');await onlineLibrary()});
+  el.innerHTML=`<div class="topline"><h2>${esc(title)}</h2>${playlist?'<div class="tools"><button id="rename-online">Renombrar</button><button id="delete-online" class="danger">Eliminar playlist</button></div>':onlineSection==='history'?'<button id="clear-history">Borrar historial</button>':''}</div>${playable.length?`<div class="artist-actions collection-actions"><button class="primary" data-collection="play">▶ Reproducir</button><button data-collection="shuffle" aria-label="Reproducir en aleatorio">⤮ Aleatorio</button><button data-collection="queue">+ Añadir a la cola</button></div>`:''}<div id="library-videos">${videoCards(items,playlist?.id)}</div>`;bindVideoCards(el,items,playlist?.id);
+  el.querySelectorAll('[data-collection]').forEach(b=>b.onclick=()=>{const kind=b.dataset.collection;if(kind==='queue'){notify(enqueue(playable)?'Reproduciendo «'+title+'».':playable.length+' canciones añadidas a la cola.');return}playList(playable,0,kind==='shuffle')});
+  if(playlist){$('#rename-online').onclick=()=>textForm('Renombrar playlist','Nombre',async name=>{await api('/api/playlists/'+playlist.id,'PATCH',{name});await onlineLibrary(true)},playlist.name);$('#delete-online').onclick=()=>confirmAction('¿Eliminar esta playlist?','Se eliminan sus referencias online y asociaciones locales. Los archivos de biblioteca y el contenido del proveedor no se borran.',async()=>{await api('/api/playlists/'+playlist.id,'DELETE');onlineSection='playlists';await onlineLibrary(true)})}
+  if($('#clear-history'))$('#clear-history').onclick=()=>confirmAction('¿Borrar tu historial?','Solo se elimina el historial de IVOX.',async()=>{await api('/api/online/history','DELETE');await onlineLibrary(true)});
 }
 
 // ---- Playback core ----------------------------------------------------------
@@ -227,7 +323,7 @@ function beginPlayback(){
   playController?.abort();playController=new AbortController();window.IVoxPlayerControls.cancelSeek();
   clearTimeout(advanceTimer);clearTimeout(skipTimer);skipTimer=null;clearTimeout(watchdog);
   clearTimeout(stallTimer);stallTimer=null;playbackWanted=false;recoveryAttempts=0;lastPlaybackTime=0;recoveryInFlight=false;
-  resumeAt=0;fixingDuration=false;return {version:++playVersion,signal:playController.signal};
+  resumeAt=0;fixingDuration=false;queueFinished=false;nearEnd=false;return {version:++playVersion,signal:playController.signal};
 }
 function showTrack(item){
   $('#online-player').hidden=false;document.body.classList.add('has-online-player');
@@ -291,10 +387,10 @@ async function playbackFailure(message){
   onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();playerState('error');
   $('#external-playback').innerHTML=externalLink(current)+(current.provider==='piped'?'<button id="playback-audius">Buscar alternativas en Audius</button>':'');
   if($('#playback-audius'))$('#playback-audius').onclick=()=>perform(async()=>{const q=(current.channel+' '+current.title).slice(0,120);history.pushState({},'','/');await discover();$('#online-query').value=q;$('#search-source').value='audius';await runSearch(q,false,'audius')});
-  if(failStreak>=3){$('#playback-status').textContent=message+' Se detuvo tras varios fallos seguidos. Prueba otra canción.';notify(message+' La reproducción se ha detenido tras varios fallos.');return}
+  if(failStreak>=3){queueFinished=true;$('#playback-status').textContent=message+' Se detuvo tras varios fallos seguidos. Prueba otra canción.';notify(message+' La reproducción se ha detenido tras varios fallos.');return}
   if(audioIndex>=audioQueue.length-1)await ensureRadio(true);
   if(version!==playVersion)return;
-  if(audioIndex>=audioQueue.length-1){$('#playback-status').textContent=message+' Busca otra canción o cambia de fuente.';notify(message);return}
+  if(audioIndex>=audioQueue.length-1){queueFinished=true;$('#playback-status').textContent=message+' Busca otra canción o cambia de fuente.';notify(message);return}
   $('#playback-status').textContent=message+' Pasamos a la siguiente…';notify(message+' Pasamos a la siguiente.');
   advanceTimer=setTimeout(()=>{if(!me||version!==playVersion)return;audioIndex++;startOnline()},1200);
 }
@@ -309,25 +405,46 @@ function skipTo(index){
   skipTimer=setTimeout(()=>{skipTimer=null;startOnline()},200);
 }
 const skipBy=delta=>skipTo(audioIndex+delta);
-function nextTrack(){if(audioIndex<audioQueue.length-1)return skipBy(1);ensureRadio(true).then(added=>{if(added)skipBy(1);else notify('No hay más canciones en la cola.')})}
-// Autoplay radio: when the queue is about to run out, 10 similar songs are appended.
+function nextTrack(){if(audioIndex<audioQueue.length-1)return skipBy(1);notify('Buscando canciones similares…');ensureRadio(true).then(added=>{if(added)skipBy(1);else notify('No hay más canciones en la cola.')})}
+// Autoplay radio: when the queue is about to run out, similar songs are appended.
+// Seeds go from the most recent songs back; one that adds nothing new is not asked again.
+// If the catalogue has nothing, the listener's own favourites and history keep it going.
 async function ensureRadio(force=false){
   if(!autoplay||!audioQueue.length)return false;
   if(!force&&audioIndex<audioQueue.length-2)return false;
-  const seed=[...audioQueue].reverse().find(v=>v.provider==='piped'&&!failedReferences.has(v.id));if(!seed)return false;
-  if(radioFor===seed.id)return radioPromise;
-  radioFor=seed.id;const queue=audioQueue;
-  radioPromise=api('/api/online/radio/'+seed.id).then(r=>{
+  if(radioPromise)return radioPromise;
+  const queue=audioQueue;
+  const append=items=>{const have=new Set(audioQueue.map(v=>v.id)),fresh=items.filter(v=>v&&v.available!==false&&!have.has(v.id)&&!failedReferences.has(v.id)).slice(0,10).map(v=>({...v,radio:true}));if(!fresh.length)return false;audioQueue.push(...fresh);drawQueue();nowPlaying.radioAdded(fresh.length);if(audioIndex>=audioQueue.length-fresh.length-1&&nearEnd)prefetchNext();return true};
+  radioPromise=(async()=>{
+    const seeds=[...new Map([...audioQueue.slice(0,audioIndex+1).reverse(),...audioQueue.slice(audioIndex+1).reverse()].filter(v=>v.provider==='piped'&&!failedReferences.has(v.id)&&!radioTried.has(v.id)).map(v=>[v.id,v])).values()];
+    // Prefer the last song in the queue, then what is playing now.
+    const ordered=[audioQueue.at(-1),audioQueue[audioIndex],...seeds].filter((v,i,a)=>v&&seeds.includes(v)&&a.indexOf(v)===i).slice(0,3);
+    for(const seed of ordered){
+      radioTried.add(seed.id);
+      try{const r=await api('/api/online/radio/'+seed.id);if(queue!==audioQueue)return false;if(append(r.items))return true}catch{if(queue!==audioQueue)return false}
+    }
     if(queue!==audioQueue)return false;
-    const have=new Set(audioQueue.map(v=>v.id)),fresh=r.items.filter(v=>!have.has(v.id)&&!failedReferences.has(v.id)).slice(0,10).map(v=>({...v,radio:true}));
-    if(!fresh.length)return false;
-    audioQueue.push(...fresh);drawQueue();prefetchNext();nowPlaying.radioAdded(fresh.length);return true;
-  }).catch(()=>{radioFor=null;return false});
+    return append(onlineData.saves.map(x=>onlineData.items[x.video_id]).filter(v=>v&&v.provider!=='local').sort(()=>Math.random()-.5));
+  })().finally(()=>{radioPromise=null});
   return radioPromise;
 }
-function startRadio(v){audioQueue=[v];audioIndex=0;failedReferences.clear();radioFor=null;startOnline();ensureRadio(true).then(added=>{if(added)notify('Radio de «'+v.title+'»: canciones similares en la cola.')})}
+function playList(list,index=0,shuffle=false){
+  if(!list.length)return;const items=shuffle?[...list].sort(()=>Math.random()-.5):[...list];
+  audioQueue=items;audioIndex=shuffle?0:Math.max(0,index);failedReferences.clear();radioTried.clear();failStreak=0;startOnline();
+}
+// Adds songs after what the user queued, before automatic radio picks. If the music had
+// already finished (or failed), the first added song starts right away.
+function enqueue(items,next=false){
+  items=items.filter(v=>v&&v.available!==false).map(v=>({...v,radio:false}));if(!items.length)return false;
+  if(audioIndex<0||!audioQueue.length){playList(items);return true}
+  const radio=audioQueue.findIndex((x,i)=>i>audioIndex&&x.radio),at=next?audioIndex+1:radio<0?audioQueue.length:radio;
+  audioQueue.splice(at,0,...items);
+  if(queueFinished||$('#online-player').dataset.state==='error'||$('#online-player').hidden){audioIndex=at;failStreak=0;startOnline();return true}
+  drawQueue();prefetchNext();return false;
+}
+function startRadio(v){audioQueue=[v];audioIndex=0;failedReferences.clear();radioTried.clear();startOnline();ensureRadio(true).then(added=>{if(added)notify('Radio de «'+v.title+'»: canciones similares en la cola.')})}
 function setAutoplay(on){autoplay=on;try{localStorage.setItem('ivox-autoplay',on?'1':'0')}catch{}if(on)ensureRadio();nowPlaying.state($('#online-player').dataset.state)}
-window.playLocal=(items,index)=>{audioQueue=items;audioIndex=index;failedReferences.clear();radioFor=null;startOnline()};
+window.playLocal=(items,index)=>playList(items,index);
 
 function clearStall(){clearTimeout(stallTimer);stallTimer=null;}
 function pausePlayback(){playbackWanted=false;recoveryInFlight=false;clearStall();clearTimeout(watchdog);onlineAudio.pause();if(audioQueue[audioIndex])playerState('paused');}
@@ -342,17 +459,21 @@ function recoverCurrent(){
   onlineAudio.play().catch(e=>{if(version!==playVersion||!playbackWanted||e.name==='AbortError')return;if(e.name==='NotAllowedError'){pausePlayback();playerState('paused');$('#playback-status').textContent='Pulsa ▶ para continuar.'}else retryAudioLevel(version)});
   armWatchdog(version,8000);return true;
 }
-onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;prefetchNext();ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).catch(()=>{})}};
+onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).catch(()=>{})}};
 onlineAudio.onerror=()=>{const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
 onlineAudio.addEventListener('playing',()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav')recoveryInFlight=false});
 onlineAudio.onended=async()=>{
   if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav')return;const version=playVersion;
   clearStall();clearTimeout(watchdog);
-  if(audioIndex<audioQueue.length-1){audioIndex++;startOnline();return}
-  playerState('loading');const added=await ensureRadio(true);
+  if(audioIndex<audioQueue.length-1){advance();return}
+  playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';const added=await ensureRadio(true);
   if(version!==playVersion)return;
-  if(added&&audioIndex<audioQueue.length-1){audioIndex++;startOnline()}else{playbackWanted=false;playerState('paused')}
+  if(added&&audioIndex<audioQueue.length-1)advance();else{playbackWanted=false;queueFinished=true;playerState('paused');$('#playback-status').textContent='Fin de la cola. Añade una canción y sonará al momento.'}
 };
+function advance(){
+  if(!audioQueue[audioIndex]?.radio&&audioQueue[audioIndex+1]?.radio)notify('Tu cola terminó: seguimos con recomendaciones similares.');
+  audioIndex++;startOnline();
+}
 onlineAudio.onpause=()=>{if(!fixingDuration&&!resolutionBusy&&!onlineAudio.error&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&!['loading','error'].includes($('#online-player').dataset.state)){playbackWanted=false;clearStall();clearTimeout(watchdog);playerState('paused')}};
 // Do not replace the startup watchdog or postpone reconnection on every waiting event.
 onlineAudio.onwaiting=()=>{
@@ -382,8 +503,12 @@ function progress(time,total){
   if('mediaSession' in navigator&&navigator.mediaSession.setPositionState&&Number.isFinite(total)&&total>0&&Date.now()-positionStamp>1000){positionStamp=Date.now();try{navigator.mediaSession.setPositionState({duration:total,position:Math.min(time,total),playbackRate:onlineAudio.playbackRate||1})}catch{}}
 }
 onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=>{
-  if(onlineAudio.getAttribute('src')==='/silence.wav'||fixingDuration)return;progress(onlineAudio.currentTime,trackDuration());
+  if(onlineAudio.getAttribute('src')==='/silence.wav'||fixingDuration)return;const total=trackDuration();progress(onlineAudio.currentTime,total);
+  // Some browsers (Safari) can skip or misorder 'playing': audible progress means it plays.
+  if(!onlineAudio.paused&&onlineAudio.readyState>=3&&onlineAudio.currentTime>lastPlaybackTime+.05&&$('#online-player').dataset.state==='loading'&&!recoveryInFlight)onlineAudio.onplaying();
   if(onlineAudio.readyState>=2)lastPlaybackTime=onlineAudio.currentTime;
+  // 30 s before the end the next song is resolved (and the radio fetched) so it starts at once.
+  if(!nearEnd&&total>0&&total-onlineAudio.currentTime<30&&!onlineAudio.paused){nearEnd=true;prefetchedReset(audioQueue[audioIndex+1]);prefetchNext();ensureRadio()}
 };
 ['#online-player .player-heading','#online-player .np-art'].forEach(s=>$(s).onclick=()=>nowPlaying.open());
 $('#np-expand').onclick=()=>nowPlaying.open();
@@ -393,7 +518,11 @@ function toggleOnline(){
   if(!source||source==='/silence.wav'||failedReferences.has(audioQueue[audioIndex].id)){failedReferences.delete(audioQueue[audioIndex].id);failStreak=0;startOnline();return}
   // paused becomes false as soon as play() is requested, before any audio is
   // ready. A repeat Play while loading must not silently cancel that request.
-  if($('#online-player').dataset.state==='loading')return;
+  if($('#online-player').dataset.state==='loading'){
+    if(Date.now()-loadingSince<6000)return;
+    playbackWanted=true;if(lastPlaybackTime>.25){recoveryAttempts=0;recoveryInFlight=false;if(recoverCurrent())return}
+    startOnline();return;
+  }
   if(onlineAudio.paused){playbackWanted=true;onlineAudio.play().catch(e=>{if(e.name!=='AbortError')retryAudioLevel()})}else pausePlayback();
 }
 $('#np-toggle').onclick=toggleOnline;
@@ -401,7 +530,7 @@ $('#np-download').onclick=()=>perform(()=>downloadOnline(audioQueue[audioIndex])
 $('#np-like').onclick=e=>{const v=audioQueue[audioIndex];if(v)perform(()=>setFavorite(v,!savedVideo(v.id).favorite,e.currentTarget))};
 // Lock screen / headphones / Control Center controls on iPhone and Android.
 if('mediaSession' in navigator){
-  const actions={play:()=>{playbackWanted=true;onlineAudio.play().catch(()=>{})},pause:pausePlayback,previoustrack:()=>$('#online-previous').click(),nexttrack:()=>nextTrack(),seekto:d=>{if(d.seekTime!=null)window.IVoxPlayerControls.seek(d.seekTime)}};
+  const actions={play:()=>{if(onlineAudio.paused||!onlineAudio.getAttribute('src'))toggleOnline()},pause:pausePlayback,previoustrack:()=>$('#online-previous').click(),nexttrack:()=>nextTrack(),seekto:d=>{if(d.seekTime!=null)window.IVoxPlayerControls.seek(d.seekTime)}};
   for(const [name,handler] of Object.entries(actions)){try{navigator.mediaSession.setActionHandler(name,(d)=>{if(!$('#online-player').hidden)handler(d)})}catch{}}
 }
 document.addEventListener('keydown',e=>{
@@ -410,8 +539,8 @@ document.addEventListener('keydown',e=>{
   else if(e.shiftKey&&e.code==='ArrowRight'){e.preventDefault();nextTrack()}else if(e.shiftKey&&e.code==='ArrowLeft'){e.preventDefault();skipBy(-1)}
   else if(e.key==='l'||e.key==='L')$('#np-like').click();
 });
-window.stopOnline=function(){beginPlayback();onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();audioQueue=[];audioIndex=-1;recordedReference=null;radioFor=null;failStreak=0;if(blobUrl){URL.revokeObjectURL(blobUrl);blobUrl=null}$('#online-player').hidden=true;document.body.classList.remove('has-online-player');nowPlaying.close(true);playerState('idle');if('mediaSession' in navigator)navigator.mediaSession.metadata=null};
-window.resetOnlineSession=function(){stopOnline();cancelOnlineSearch();prefetched.clear();searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};onlineData={saves:[],playlists:[],items:{},recent:[]}};
+window.stopOnline=function(){beginPlayback();onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();audioQueue=[];audioIndex=-1;recordedReference=null;radioTried.clear();failStreak=0;if(blobUrl){URL.revokeObjectURL(blobUrl);blobUrl=null}$('#online-player').hidden=true;document.body.classList.remove('has-online-player');nowPlaying.close(true);playerState('idle');if('mediaSession' in navigator)navigator.mediaSession.metadata=null};
+window.resetOnlineSession=function(){stopOnline();cancelOnlineSearch();prefetched.clear();onlineLoaded=false;searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};onlineData={saves:[],playlists:[],items:{},recent:[]}};
 window.pauseOnline=pausePlayback;
 // "Previous" restarts the song after the first few seconds, like every music app.
 $('#close-online').onclick=()=>stopOnline();$('#online-previous').onclick=()=>{if(onlineAudio.currentTime>4&&!skipTimer){window.IVoxPlayerControls.seek(0);return}skipBy(-1)};$('#online-next').onclick=()=>nextTrack();

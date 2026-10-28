@@ -31,7 +31,7 @@ Usa las variables de Turso existentes. `IVOX_AUDIO_CACHE_SCOPE` es una etiqueta 
 
 ```dotenv
 IVOX_AUDIO_CACHE_SCOPE=
-IVOX_YTDLP_FAST=1
+IVOX_YTDLP_FAST=0  # desactivado por defecto desde el 28-10-2026: falló en todas las canciones probadas y añadía ~0,1 s
 IVOX_AUDIO_PREFETCH=1
 ```
 

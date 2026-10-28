@@ -82,6 +82,10 @@ class MusicSearch:
     def get_artist(self,browse_id):return self.call('artist',browse_id=browse_id)
     def radio(self,video_id,limit=25):return self.call('radio',video_id=video_id,limit=limit)
     def lyrics(self,video_id):return self.call('lyrics',video_id=video_id)
+    def suggest(self,query):
+        result=self.call('suggest',timeout=4,query=query)
+        if not isinstance(result,dict):raise ProviderError(502,'ytmusic_unavailable','YouTube Music devolvió una respuesta inesperada.')
+        return result
 
     @staticmethod
     def normalize(entry):
@@ -165,6 +169,31 @@ def worker():
             lines=[{'start':int(l.start_time),'end':int(l.end_time),'text':str(l.text)} for l in data['lyrics']]
             return {'synced':True,'lines':lines,'source':str(data.get('source') or '')}
         return {'synced':False,'text':str(data['lyrics']),'source':str(data.get('source') or '')}
+    def suggest(query):
+        # The typeahead endpoint answers in ~80 ms with query completions plus the
+        # artists and songs YouTube Music would offer for a half-typed name.
+        data=client()._send_request('music/get_search_suggestions',{'input':query})
+        queries,artists,songs=[],[],[]
+        for section in data.get('contents') or []:
+            for item in (section.get('searchSuggestionsSectionRenderer') or {}).get('contents') or []:
+                text=item.get('searchSuggestionRenderer')
+                if text:
+                    value=''.join(r.get('text','') for r in (text.get('suggestion') or {}).get('runs') or []).strip()
+                    if value:queries.append(value)
+                    continue
+                entry=item.get('musicResponsiveListItemRenderer')
+                if not entry:continue
+                runs=[r for col in entry.get('flexColumns') or [] for r in ((col.get('musicResponsiveListItemFlexColumnRenderer') or {}).get('text') or {}).get('runs') or []]
+                if not runs:continue
+                thumbnails=(((entry.get('thumbnail') or {}).get('musicThumbnailRenderer') or {}).get('thumbnail') or {}).get('thumbnails')
+                nav=entry.get('navigationEndpoint') or {}
+                if nav.get('watchEndpoint',{}).get('videoId'):
+                    names=[r['text'] for r in runs[1:] if str(((r.get('navigationEndpoint') or {}).get('browseEndpoint') or {}).get('browseId','')).startswith('UC')]
+                    if not names:names=[r['text'] for r in runs[3:4] if r.get('text','').strip(' •&,')]
+                    songs.append({'videoId':nav['watchEndpoint']['videoId'],'title':runs[0].get('text',''),'artists':[{'name':n} for n in names],'thumbnails':thumbnails,'kind':runs[1].get('text','') if len(runs)>1 else ''})
+                elif str((nav.get('browseEndpoint') or {}).get('browseId','')).startswith('UC'):
+                    artists.append({'browseId':nav['browseEndpoint']['browseId'],'artist':runs[0].get('text',''),'thumbnails':thumbnails})
+        return {'queries':queries[:8],'artists':artists[:4],'songs':songs[:5]}
     def handle(request):
         op,args=request.get('op'),request.get('args') or {}
         try:
@@ -176,6 +205,7 @@ def worker():
             elif op=='artist':result=MusicSearch.artist_profile(client().get_artist(args['browse_id']),args['browse_id'])
             elif op=='radio':result=radio(args['video_id'],int(args.get('limit',25)))
             elif op=='lyrics':result=lyrics(args['video_id'])
+            elif op=='suggest':result=suggest(str(args['query'])[:80])
             else:raise ValueError()
             answer={'id':request.get('id'),'ok':True,'result':result}
         except Exception:answer={'id':request.get('id'),'ok':False}

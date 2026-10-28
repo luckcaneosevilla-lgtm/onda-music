@@ -50,7 +50,7 @@ def get_response(url,headers=None,timeout=15,local=False):
 
 class MusicProvider:
     def __init__(self):
-        self.lock=threading.Lock();self.cache={};self.extras={};self.piped_checked=(0,False);self.cursor_key=secrets.token_bytes(32);self.tickets={};self.rate={};self.music=MusicSearch();self.youtube=YouTube()
+        self.lock=threading.Lock();self.cache={};self.extras={};self.piped_checked=(0,False);self.cursor_key=secrets.token_bytes(32);self.tickets={};self.rate={};self.suggestions={};self.music=MusicSearch();self.youtube=YouTube()
     @property
     def configured(self):return True
     @property
@@ -241,6 +241,34 @@ class MusicProvider:
         tracks=self.extra(user_id,('radio',raw),600,lambda:self.music.radio(raw))
         items=[self.music.normalize(t) for t in tracks];items=list({i['id']:i for i in items if i and i['id']!=reference}.values())
         self.store(c,items);return items
+    def suggest(self,c,user_id,q,deep=False):
+        # Typeahead fires on keystrokes: its own cache and a looser per-user budget,
+        # so typing never eats the quota of radio and lyrics.
+        key=(q.casefold(),deep);stamp=time.time()
+        with self.lock:
+            cache=self.suggestions;hit=cache.get(key)
+            if hit and hit[0]>stamp:return hit[1]
+            until,count=self.rate.get('s:'+user_id,(stamp+60,0))
+            if stamp>until:until,count=stamp+60,0
+            if count>=240:raise ProviderError(429,'rate_limit','Demasiadas peticiones seguidas. Espera un minuto.',60)
+            self.rate['s:'+user_id]=(until,count+1)
+        raw=self.music.suggest(q)
+        songs=[s for s in (self.music.normalize(e) for e in raw.get('songs') or []) if s]
+        # Deep pass (sent after a pause in typing): when YouTube Music offers only text,
+        # the songs of its best completion fill the list (~0.5 s, still no Enter needed).
+        if deep and len(songs)<2:
+            target=(raw.get('queries') or [q])[0]
+            have={s['id'] for s in songs}
+            songs+=[s for s in (self.music.normalize(e) for e in self.music.search(target,'songs',6)) if s and s['id'] not in have]
+            songs=songs[:5]
+        artists=[a for a in (self.music.artist(e) for e in raw.get('artists') or []) if a and re.fullmatch(r'UC[A-Za-z0-9_-]{22}',a['id'])]
+        # Stored so suggested songs can be played, prefetched and saved like search results.
+        self.store(c,songs)
+        result={'queries':[str(v)[:120] for v in raw.get('queries') or []],'artists':artists,'songs':songs}
+        with self.lock:
+            if len(cache)>=500:cache.pop(next(iter(cache)))
+            cache[key]=(stamp+600,result)
+        return result
     def lyrics(self,user_id,reference):
         if not re.fullmatch(r'piped:[A-Za-z0-9_-]{11}',reference):raise ProviderError(404,'no_lyrics','Letra no disponible.')
         result=self.extra(user_id,('lyrics',reference),86400,lambda:self.music.lyrics(reference.split(':',1)[1]))
@@ -248,10 +276,14 @@ class MusicProvider:
         return result
 
     def metadata(self,c,ids):
+        # One query per 400 references: with a cloud database each query is a network round trip.
+        ids=list(dict.fromkeys(ids));found={}
+        for i in range(0,len(ids),400):
+            chunk=ids[i:i+400]
+            for row in c.execute('SELECT video_id,metadata FROM online_catalog WHERE video_id IN ('+','.join('?'*len(chunk))+')',tuple(chunk)):found[row['video_id']]=row['metadata']
         result={}
-        for vid in dict.fromkeys(ids):
-            row=c.execute('SELECT metadata FROM online_catalog WHERE video_id=?',(vid,)).fetchone()
-            if row:result[vid]=json.loads(row['metadata'])
+        for vid in ids:
+            if vid in found:result[vid]=json.loads(found[vid])
             else:result[vid]={'id':vid,'provider':vid.split(':')[0],'provider_id':vid.split(':')[-1],'source':vid.split(':')[0].title(),'title':'Referencia pendiente de actualizar','channel':'','thumbnail':'','duration':None,'available':False}
         return result
 

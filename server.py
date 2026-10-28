@@ -40,6 +40,7 @@ def forget_sessions(token=None):
 def session_cookie(token):
     secure='; Secure' if os.environ.get('ONDA_SECURE_COOKIE')=='1' else ''
     return f'onda={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}{secure}'
+LIGHT_WRITES = re.compile(r'/api/(audio/prefetch|online/items/|online/recent$|online/playlists/[a-f0-9]{32}/items$)')
 TURSO = turso.Client(os.environ['TURSO_DATABASE_URL'], os.environ['TURSO_AUTH_TOKEN']) if os.environ.get('TURSO_DATABASE_URL') and os.environ.get('TURSO_AUTH_TOKEN') else None
 
 def now(): return int(time.time())
@@ -111,9 +112,11 @@ def user_view(c,u):
     result = {k:u[k] for k in ('id','name','email','role','status','created','expires')}
     result['plan'] = effective(u)
     result['assigned_plan'] = u['plan']
-    result['limits'] = dict(c.execute('SELECT * FROM plans WHERE name=?',(result['plan'],)).fetchone())
+    # One round trip for limits and usage (each query is a network call with Turso).
+    row = c.execute('SELECT p.*,(SELECT COALESCE(SUM(size),0) FROM tracks WHERE user_id=?) AS used_storage,(SELECT COUNT(*) FROM playlists WHERE user_id=?) AS used_playlists FROM plans p WHERE p.name=?',(u['id'],u['id'],result['plan'])).fetchone()
+    result['limits'] = {k:row[k] for k in row.keys() if not k.startswith('used_')}
     result['limits']['features'] = json.loads(result['limits']['features'])
-    result['usage'] = {'storage':c.execute('SELECT COALESCE(SUM(size),0) FROM tracks WHERE user_id=?',(u['id'],)).fetchone()[0], 'playlists':c.execute('SELECT COUNT(*) FROM playlists WHERE user_id=?',(u['id'],)).fetchone()[0]}
+    result['usage'] = {'storage':row['used_storage'], 'playlists':row['used_playlists']}
     return result
 
 def audit(c,actor,target,action,reason,before,after):
@@ -224,7 +227,9 @@ class Handler(BaseHTTPRequestHandler):
                 if filename=='service-worker.js': self.send_header('Service-Worker-Allowed','/')
                 self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw); return
             with db() as c:
-                if self.command!='GET': c.execute('BEGIN IMMEDIATE')
+                # Frequent, self-contained writes skip the global write transaction (with Turso
+                # that is several serialized round trips); their writes still commit as one batch.
+                if self.command!='GET' and not LIGHT_WRITES.match(path): c.execute('BEGIN IMMEDIATE')
                 self.api(c,path)
         except (Problem,ProviderError) as e:
             # Drain bounded rejected uploads so Windows does not reset the
@@ -325,10 +330,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.online(c,u,path,method)
         if path=='/api/library' and method=='GET':
             tracks=[dict(r) for r in c.execute('SELECT id,title,size,favorite FROM tracks WHERE user_id=?',(uid,))]
-            playlists=[]
-            for r in c.execute('SELECT * FROM playlists WHERE user_id=?',(uid,)):
-                p=dict(r); p['tracks']=[t[0] for t in c.execute('SELECT track_id FROM playlist_tracks WHERE playlist_id=?',(r['id'],))]; playlists.append(p)
-            self.send(200,{'tracks':tracks,'playlists':playlists}); return
+            playlists={r['id']:dict(r,tracks=[]) for r in c.execute('SELECT * FROM playlists WHERE user_id=?',(uid,))}
+            for r in c.execute('SELECT pt.playlist_id,pt.track_id FROM playlist_tracks pt JOIN playlists p ON p.id=pt.playlist_id WHERE p.user_id=?',(uid,)): playlists[r[0]]['tracks'].append(r[1])
+            self.send(200,{'tracks':tracks,'playlists':list(playlists.values())}); return
         if path=='/api/tracks' and method=='POST':
             v=user_view(c,u); limit=v['limits']; size=int(self.headers.get('Content-Length','0'))
             require(0<size<=limit['file_size'],'El archivo supera el límite de tu plan. Usa un archivo más pequeño.',413)
@@ -390,6 +394,9 @@ class Handler(BaseHTTPRequestHandler):
             result=provider.search(c,uid,q,page,params.get('source',['auto'])[0],params.get('filter',['songs'])[0])
             resolver.prefetch_many([v['provider_id'] for v in result.get('items',[])[:5] if v.get('provider')=='piped'])
             c.commit();self.send(200,result);return
+        if path=='/api/online/suggest' and method=='GET':
+            q=' '.join(parse_qs(urlparse(self.path).query).get('q',[''])[0].split());require(1<=len(q)<=80,'Búsqueda inválida.')
+            result=provider.suggest(c,uid,q,parse_qs(urlparse(self.path).query).get('deep')==['1']);c.commit();self.send(200,result);return
         if path=='/api/online/artist' and method=='GET':
             q=' '.join(parse_qs(urlparse(self.path).query).get('q',[''])[0].split());require(2<=len(q)<=120,'Búsqueda inválida.')
             artist=provider.artist_lookup(c,uid,q);c.commit();self.send(200,{'artist':artist});return
@@ -433,12 +440,12 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/online/recent' and method=='DELETE':
             c.execute('DELETE FROM recent_searches WHERE user_id=?',(uid,));c.commit();self.send(200,{});return
         if path=='/api/online/library' and method=='GET':
-            c.execute('DELETE FROM online_catalog WHERE refreshed<?',(now()-30*86400,));c.commit()
+            # Stale catalogue rows are pruned at startup; this read stays a handful of round trips.
             saves=[dict(r) for r in c.execute('SELECT * FROM online_saves WHERE user_id=? ORDER BY COALESCE(last_played,0) DESC',(uid,))]
-            playlists=[];ids=[s['video_id'] for s in saves]
-            for row in c.execute('SELECT id,name FROM playlists WHERE user_id=? ORDER BY rowid DESC',(uid,)):
-                p=dict(row);p['tracks']=[r[0] for r in c.execute('SELECT video_id FROM online_playlist_tracks WHERE playlist_id=? ORDER BY added,rowid',(p['id'],))];ids+=p['tracks'];playlists.append(p)
-            metadata=provider.metadata(c,ids);c.commit()
+            playlists={row['id']:dict(row,tracks=[]) for row in c.execute('SELECT id,name FROM playlists WHERE user_id=? ORDER BY rowid DESC',(uid,))}
+            for row in c.execute('SELECT t.playlist_id,t.video_id FROM online_playlist_tracks t JOIN playlists p ON p.id=t.playlist_id WHERE p.user_id=? ORDER BY t.added,t.rowid',(uid,)): playlists[row[0]]['tracks'].append(row[1])
+            playlists=list(playlists.values());ids=[s['video_id'] for s in saves]+[v for p in playlists for v in p['tracks']]
+            metadata=provider.metadata(c,ids)
             self.send(200,{'saves':saves,'playlists':playlists,'items':metadata,'recent':[r[0] for r in c.execute('SELECT query FROM recent_searches WHERE user_id=? ORDER BY created DESC,rowid DESC',(uid,))]});return
         if path=='/api/online/library' and method=='DELETE':
             c.execute('DELETE FROM online_playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE user_id=?)',(uid,))
@@ -619,6 +626,12 @@ def main():
     else:
         # Warm pools: yt-dlp workers resolve one known video so the player JS is cached before the first play.
         resolver.start(warm='jNQXAC9IVRw'); provider.music.start()
+        if TURSO:
+            # A cheap ping keeps one pooled TLS connection to Turso alive, so a request
+            # after a quiet minute (the first Play, opening the library) never pays a handshake.
+            def keep_warm():
+                while True: TURSO.warm(); time.sleep(12)
+            threading.Thread(target=keep_warm,daemon=True).start()
         print(f'IVOX: escuchando en 0.0.0.0:{args.port} · acceso local http://127.0.0.1:{args.port}'); OndaHTTPServer(('0.0.0.0',args.port),Handler).serve_forever()
 
 if __name__=='__main__': main()
