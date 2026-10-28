@@ -13,12 +13,26 @@
 </head>
 <body>
   <div id="app"></div><div id="notice" role="status" aria-live="polite"></div>
-  <aside id="online-player" aria-label="Reproductor de audio" hidden>
-    <div class="player-heading"><div><small id="online-source">Audio online</small><strong id="online-playing">Elige una canción</strong></div><button id="close-online" aria-label="Detener y cerrar reproductor">×</button></div>
-    <audio id="online-audio" controls preload="metadata"></audio>
-    <div class="tools"><button id="online-previous" aria-label="Canción anterior">←</button><button id="online-next">Siguiente →</button><button id="queue-toggle" aria-expanded="false" aria-controls="online-queue">Ver cola</button></div>
+  <aside id="online-player" aria-label="Reproductor de audio" data-state="idle" hidden>
+    <div class="np-seek"><span id="np-buffer"></span><span id="np-fill"></span><input id="np-range" type="range" min="0" max="1000" value="0" step="1" aria-label="Posición de la canción"></div>
+    <div class="np-row">
+      <div class="np-art" aria-hidden="true"><img id="np-cover" alt="" hidden><span class="np-glyph">♫</span><span class="np-eq"><i></i><i></i><i></i><i></i></span></div>
+      <div class="player-heading"><strong id="online-playing">Elige una canción</strong><small id="online-source">Audio online</small></div>
+      <div class="np-controls">
+        <button id="online-previous" class="np-icon" aria-label="Canción anterior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+        <button id="np-toggle" class="np-play" aria-label="Reproducir"><svg class="np-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><svg class="np-i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg><span class="np-ring" aria-hidden="true"></span></button>
+        <button id="online-next" class="np-icon" aria-label="Canción siguiente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5l11 7-11 7z"/></svg></button>
+      </div>
+      <div class="np-extra">
+        <span class="np-time"><span id="np-current">0:00</span> / <span id="np-duration">0:00</span></span>
+        <button id="np-download" class="np-icon" aria-label="Descargar canción"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v9l3.5-3.5 1.4 1.4L12 16.8l-5.9-5.9 1.4-1.4L11 13zM5 18h14v2H5z"/></svg></button>
+        <button id="queue-toggle" class="np-icon" aria-expanded="false" aria-controls="online-queue" aria-label="Ver cola"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm14-3v6l5-3z"/></svg></button>
+        <button id="close-online" class="np-icon" aria-label="Detener y cerrar reproductor"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6 10.6 12 5 6.4z"/></svg></button>
+      </div>
+    </div>
     <p id="playback-status" role="status">Elige una canción.</p><div id="external-playback"></div>
     <ol id="online-queue" hidden></ol>
+    <audio id="online-audio" preload="auto" playsinline></audio>
   </aside>
   <footer id="player" hidden><span id="playing">Elige una canción</span><button id="previous" aria-label="Canción anterior">←</button><audio id="audio" controls preload="metadata"></audio><button id="next" aria-label="Canción siguiente">→</button></footer>
   <dialog id="dialog"></dialog>

@@ -1,4 +1,4 @@
-const CACHE = 'ivox-app-shell-v3';
+const CACHE = 'ivox-app-shell-v4';
 const SHELL = ['/', '/index.html', '/style.css', '/online.css', '/player.css',
   '/app.js', '/online.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav'];
 const ASSETS = new Set(SHELL);

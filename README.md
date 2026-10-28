@@ -95,7 +95,7 @@ Cuando esté disponible la IP se prepararán los comandos de instalación, trans
 
 ## Seguridad y persistencia
 
-Contraseñas con scrypt y sal aleatoria, sesiones opacas de siete días almacenadas como hash, cookies HttpOnly/SameSite Strict, CSRF para escrituras y comprobación de Origin cuando existe. Rate limit persistente de intentos fallidos de login por IP. Roles, planes, vencimientos y límites se validan en el servidor; suspensión y cambios se aplican a sesiones abiertas. Los streams comprueban sesión durante la transmisión. Los bytes ya recibidos no pueden revocarse.
+Contraseñas con scrypt y sal aleatoria, sesiones opacas de 180 días que se renuevan solas con el uso (el iPhone no pide volver a entrar mientras abras IVOX de vez en cuando), almacenadas como hash, cookies HttpOnly/SameSite Strict, CSRF para escrituras y comprobación de Origin cuando existe. Rate limit persistente de intentos fallidos de login por IP. Roles, planes, vencimientos y límites se validan en el servidor; suspensión y cambios se aplican a sesiones abiertas. Los streams comprueban sesión durante la transmisión. Los bytes ya recibidos no pueden revocarse.
 
 Las consultas y asociaciones de biblioteca verifican propietario. El administrador recibe datos de cuenta y uso agregado, sin archivos ni títulos privados de otras cuentas. Las mutaciones usan transacciones SQLite y las importaciones validan firmas y usan nombres internos aleatorios.
 

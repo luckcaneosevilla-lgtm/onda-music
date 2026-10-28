@@ -68,7 +68,7 @@ try:
         mobile.get_by_role('link',name='⌕ Descubrir',exact=True).click();mobile.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for();search(mobile,'audius')
         mobile.locator('[data-online-play]').first.click();mobile.wait_for_function('() => !!onlineAudio.getAttribute("src")',timeout=25000)
         assert mobile.evaluate('() => onlineAudio.paused')
-        mobile.locator('#online-audio').click(position={'x':25,'y':27})
+        mobile.locator('#np-toggle').click()
         mobile.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime > 0.5',timeout=25000)
         source=mobile.locator('#online-audio').get_attribute('src');mobile.get_by_role('link',name='Mi plan',exact=True).click();mobile.get_by_role('heading',name='Mi plan',exact=True).wait_for();assert mobile.locator('#online-audio').get_attribute('src')==source
         assert mobile.evaluate('document.documentElement.scrollWidth<=innerWidth');mobile.screenshot(path=str(out/'hybrid-player-mobile.png'),full_page=True)

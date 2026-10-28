@@ -15,7 +15,33 @@ function unlockAudio(){
   onlineAudio.src='/silence.wav';onlineAudio.play().then(()=>{if(onlineAudio.getAttribute('src')==='/silence.wav'){onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load()}}).catch(()=>{});
 }
 ['click','touchend','keydown'].forEach(t=>document.addEventListener(t,unlockAudio,true));
-function prefetchNext(){const ids=audioQueue.slice(audioIndex+1,audioIndex+3).filter(v=>v.provider==='piped').map(v=>v.provider_id);if(ids.length)api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>{})}
+function prefetchNext(){prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+3))}
+// Resolving a YouTube audio URL takes seconds; doing it before the tap (top results,
+// hover, touch) makes Play start almost instantly. Each id is warmed once per page.
+const prefetched=new Set();
+function prefetchAudio(items){const ids=items.filter(v=>v&&v.provider==='piped'&&!prefetched.has(v.provider_id)).slice(0,2).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.add(id));api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
+const clock=n=>Number.isFinite(n)?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`:'0:00';
+function playerState(state){
+  $('#online-player').dataset.state=state;const playing=state==='playing';
+  $('#np-toggle').setAttribute('aria-label',playing?'Pausar':'Reproducir');
+  if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':state==='paused'?'paused':'none';
+  syncCards();
+}
+// Highlights the row of the current song anywhere it is listed, mirroring the bar state.
+function syncCards(){const current=audioQueue[audioIndex]?.id,state=$('#online-player').dataset.state;document.querySelectorAll('.video-row[data-video]').forEach(row=>{const on=row.dataset.video===current&&!$('#online-player').hidden;row.classList.toggle('is-current',on);if(on)row.dataset.state=state;else delete row.dataset.state})}
+function nowPlayingArt(item){
+  const cover=$('#np-cover');if(item.thumbnail){cover.src=item.thumbnail;cover.hidden=false;cover.onerror=()=>{cover.hidden=true}}else{cover.hidden=true;cover.removeAttribute('src')}
+  if('mediaSession' in navigator&&window.MediaMetadata)navigator.mediaSession.metadata=new MediaMetadata({title:item.title,artist:item.channel||'',album:'IVOX',artwork:item.thumbnail?[{src:item.thumbnail,sizes:'512x512'}]:[{src:'/icon-512x512.png',sizes:'512x512',type:'image/png'}]});
+}
+async function downloadOnline(v){
+  if(!v)return;notify('Preparando descarga de «'+v.title+'»…');
+  let url;
+  if(v.provider==='piped')url='/api/audio/'+v.provider_id;
+  else url=(await api('/api/online/play/'+encodeURIComponent(v.id).replace('%3A',':')+'?format=mp4')).url;
+  const name=[v.channel,v.title].filter(Boolean).join(' - ');
+  const link=document.createElement('a');link.href=url+(url.includes('?')?'&':'?')+'download='+encodeURIComponent(name);link.download='';
+  document.body.append(link);link.click();link.remove();
+}
 window.cancelOnlineSearch=()=>{searchController?.abort();searchVersion++;searchView.loading=false};
 
 async function onlineState(){const [status,data]=await Promise.all([api('/api/online/status'),api('/api/online/library')]);onlineStatus=status;onlineData=data}
@@ -66,14 +92,17 @@ function videoCards(items,playlist=null){
 }
 function bindVideoCards(root,items,playlist=null){
   root.querySelectorAll('[data-discover]').forEach(a=>a.onclick=e=>{e.preventDefault();history.pushState({},'','/');render().catch(e=>notify(e.message))});
-  root.querySelectorAll('[data-online-play]').forEach(b=>b.onclick=()=>{audioQueue=[...items];audioIndex=items.findIndex(v=>v.id===b.dataset.onlinePlay);failedReferences.clear();startOnline()});
+  root.querySelectorAll('[data-online-play]').forEach(b=>b.onclick=()=>{const id=b.dataset.onlinePlay;if(audioQueue[audioIndex]?.id===id&&!$('#online-player').hidden){toggleOnline();return}audioQueue=[...items];audioIndex=items.findIndex(v=>v.id===id);failedReferences.clear();startOnline()});
+  root.querySelectorAll('.video-row[data-video]').forEach(row=>{const warm=()=>prefetchAudio([videoById(row.dataset.video)]);row.addEventListener('pointerenter',warm,{once:true});row.addEventListener('touchstart',warm,{once:true,passive:true})});
+  if(root.querySelector('.video-row'))prefetchAudio(items.slice(0,2));syncCards();
   root.querySelectorAll('[data-online-fav]').forEach(b=>b.onclick=()=>perform(async()=>{const id=b.dataset.onlineFav,next=!savedVideo(id).favorite;await api('/api/online/items/'+id,'PATCH',{favorite:next});onlineData=await api('/api/online/library');if(location.pathname==='/')drawSearch();else drawOnlineLibrary();notify(next?'Guardado en favoritos de IVOX.':'Quitado de favoritos de IVOX.')}));
   root.querySelectorAll('[data-online-menu]').forEach(b=>b.onclick=()=>onlineOptions(videoById(b.dataset.onlineMenu)));
   root.querySelectorAll('[data-online-remove]').forEach(b=>b.onclick=()=>perform(async()=>{await api('/api/online/playlists/'+playlist+'/items','DELETE',{video_id:b.dataset.onlineRemove});await onlineLibrary()}));
 }
 function externalLink(v){if(v.provider==='piped'&&onlineStatus?.allow_youtube_external)return `<a class="text-link" href="https://www.youtube.com/watch?v=${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en YouTube (fuera de IVOX)</a>`;if(v.provider==='audius')return `<a class="text-link" href="https://audius.co/tracks/${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en Audius</a>`;return ''}
 function onlineOptions(v){
-  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="enqueue">Añadir a la cola</button><button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button>${externalLink(v)}</div>`);
+  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="enqueue">Añadir a la cola</button><button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button><button id="download-online">Descargar</button>${externalLink(v)}</div>`);
+  $('#download-online').onclick=()=>{dialog.close();perform(()=>downloadOnline(v))};
   $('#enqueue').onclick=()=>{audioQueue.push(v);drawQueue();dialog.close();notify('Añadido a la cola.')};
   $('#save-later').onclick=()=>perform(async()=>{await api('/api/online/items/'+v.id,'PATCH',{later:!s.later});onlineData=await api('/api/online/library');dialog.close();if(location.pathname==='/library')drawOnlineLibrary();notify(s.later?'Quitado de escuchar después.':'Guardado para escuchar después.')});$('#to-playlist').onclick=()=>pickOnlinePlaylist(v);
 }
@@ -101,7 +130,8 @@ async function startOnline(autostart=true,minimumLevel=1){
   clearTimeout(advanceTimer);const item=audioQueue[audioIndex];if(!item)return;const version=++playVersion;
   resolutionBusy=true;activeLevel=0;onlineAudio.pause();recordedReference=null;
   audio.pause();$('#player').hidden=true;$('#online-player').hidden=false;document.body.classList.add('has-online-player');
-  $('#online-playing').textContent=item.title;$('#online-source').textContent=item.source||item.provider;$('#playback-status').textContent='Preparando audio…';$('#external-playback').innerHTML='';drawQueue();
+  $('#online-playing').textContent=item.title;$('#online-source').textContent=[item.channel,item.source||item.provider].filter(Boolean).join(' · ');$('#playback-status').textContent='Preparando audio…';$('#external-playback').innerHTML='';
+  nowPlayingArt(item);progress(0,0);playerState('loading');drawQueue();
   try{
     let result;
     // Level 1 plays in the same tick as the click (no await before play), so the gesture is kept;
@@ -114,10 +144,9 @@ async function startOnline(autostart=true,minimumLevel=1){
       if(version!==playVersion||!me)return;
     }
     activeLevel=result.level||4;activeEngine=result.source==='yt-dlp'?'yt-dlp':result.source==='piped'?'Piped':'Audius';
-    $('#online-source').textContent=activeEngine+' · Nivel '+activeLevel+(result.muxed?' · MP4 muxado':'');
     onlineAudio.src=result.url;onlineAudio.load();resolutionBusy=false;
-    if(!autostart){$('#playback-status').textContent='Preparado. Pulsa ▶ en los controles de audio para escuchar.';return}
-    try{await onlineAudio.play()}catch(e){if(version!==playVersion)return;if(e.name==='NotAllowedError')$('#playback-status').textContent='Pulsa ▶ en los controles de audio para empezar.';else retryAudioLevel()}
+    if(!autostart){playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
+    try{await onlineAudio.play()}catch(e){if(version!==playVersion)return;if(e.name==='NotAllowedError'){playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel()}
   }catch(e){if(version===playVersion&&me){if(await tryAudiusFallback(item,version,autostart))return;if(version===playVersion){resolutionBusy=false;playbackFailure('No disponible, elige otro.')}}}
 }
 async function retryAudioLevel(){if(resolutionBusy)return;const item=audioQueue[audioIndex];if(!item)return;if(item.provider==='piped'&&activeLevel<3){const next=activeLevel===1?2:3;resolutionBusy=true;startOnline(true,next);return}const version=playVersion;resolutionBusy=true;if(await tryAudiusFallback(item,version))return;if(version===playVersion){resolutionBusy=false;playbackFailure('No disponible, elige otro.')}}
@@ -135,21 +164,45 @@ async function tryAudiusFallback(item,version,autostart=true){
   }catch{return false}
 }
 function playbackFailure(message){
-  const current=audioQueue[audioIndex];if(!current)return;failedReferences.add(current.id);onlineAudio.pause();
+  const current=audioQueue[audioIndex];if(!current)return;failedReferences.add(current.id);onlineAudio.pause();playerState('paused');
   const hasNext=audioIndex<audioQueue.length-1;$('#playback-status').textContent=message+(hasNext?' Se preparará la siguiente canción.':' Busca otra canción o cambia de fuente.');$('#external-playback').innerHTML=externalLink(current)+(current.provider==='piped'?'<button id="playback-audius">Buscar alternativas en Audius</button>':'');notify(message);
   const fallback=async()=>{const q=(searchView.query||current.channel+' '+current.title).slice(0,120);stopOnline();history.pushState({},'','/');await discover();$('#online-query').value=q;$('#search-source').value='audius';await runSearch(q,false,'audius');searchView.notice='No se ha podido obtener audio de Piped. Se muestran alternativas de Audius; pueden ser versiones distintas o contenido independiente.';drawSearch()};
   if($('#playback-audius'))$('#playback-audius').onclick=()=>perform(fallback);
   if(current.provider==='piped'&&searchView.source==='auto'&&[...failedReferences].filter(id=>id.startsWith('piped:')).length>=3){perform(fallback);return}
   if(hasNext){clearTimeout(advanceTimer);advanceTimer=setTimeout(()=>{if(!me)return;audioIndex++;startOnline()},1800)}
 }
-onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current)return;$('#playback-status').textContent='Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;prefetchNext();perform(async()=>{await api('/api/online/items/'+current.id,'PATCH',{played:true});onlineData=await api('/api/online/library')})}};
+onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current)return;playerState('playing');$('#playback-status').textContent='Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;prefetchNext();perform(async()=>{await api('/api/online/items/'+current.id,'PATCH',{played:true});onlineData=await api('/api/online/library')})}};
 onlineAudio.onerror=()=>{if(onlineAudio.getAttribute('src'))retryAudioLevel()};
-onlineAudio.onended=()=>{if(audioIndex<audioQueue.length-1){audioIndex++;startOnline()}};
+onlineAudio.onended=()=>{if(audioIndex<audioQueue.length-1){audioIndex++;startOnline()}else playerState('paused')};
+onlineAudio.onpause=()=>{if(!resolutionBusy&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&$('#online-player').dataset.state!=='loading')playerState('paused')};
+onlineAudio.onwaiting=()=>{if(!onlineAudio.paused)playerState('loading')};
+let seeking=false;
+function progress(time,total){
+  $('#np-current').textContent=clock(time);$('#np-duration').textContent=clock(total);
+  const ratio=total>0?Math.min(1,time/total):0;$('#np-fill').style.width=ratio*100+'%';if(!seeking)$('#np-range').value=Math.round(ratio*1000);
+  const buffered=onlineAudio.buffered;$('#np-buffer').style.width=(total>0&&buffered.length?Math.min(1,buffered.end(buffered.length-1)/total)*100:0)+'%';
+}
+onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav')progress(onlineAudio.currentTime,onlineAudio.duration)};
+$('#np-range').oninput=e=>{seeking=true;const total=onlineAudio.duration;if(total>0){$('#np-fill').style.width=e.target.value/10+'%';$('#np-current').textContent=clock(total*e.target.value/1000)}};
+$('#np-range').onchange=e=>{seeking=false;const total=onlineAudio.duration;if(total>0)onlineAudio.currentTime=total*e.target.value/1000};
+function toggleOnline(){
+  if(!audioQueue[audioIndex])return;
+  if(!onlineAudio.getAttribute('src')||failedReferences.has(audioQueue[audioIndex].id)){failedReferences.delete(audioQueue[audioIndex].id);startOnline();return}
+  if(onlineAudio.paused)onlineAudio.play().catch(()=>retryAudioLevel());else onlineAudio.pause();
+}
+$('#np-toggle').onclick=toggleOnline;
+$('#np-download').onclick=()=>perform(()=>downloadOnline(audioQueue[audioIndex]));
+// Lock screen / headphones / Control Center controls on iPhone and Android.
+if('mediaSession' in navigator){
+  const actions={play:()=>onlineAudio.play().catch(()=>{}),pause:()=>onlineAudio.pause(),previoustrack:()=>$('#online-previous').click(),nexttrack:()=>$('#online-next').click(),seekto:d=>{if(d.seekTime!=null)onlineAudio.currentTime=d.seekTime}};
+  for(const [name,handler] of Object.entries(actions)){try{navigator.mediaSession.setActionHandler(name,(d)=>{if(!$('#online-player').hidden)handler(d)})}catch{}}
+}
+document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#online-player').hidden&&!e.target.closest('input,textarea,select,button,[contenteditable]')){e.preventDefault();toggleOnline()}});
 function drawQueue(){const el=$('#online-queue');el.innerHTML=audioQueue.map((v,i)=>`<li class="${i===audioIndex?'current':''}"><button data-queue-play="${i}" ${i===audioIndex?'aria-current="true"':''}>${esc(v.title)} · ${esc(v.source||v.provider)}</button><button data-queue-remove="${i}" aria-label="Quitar ${esc(v.title)} de la cola">×</button></li>`).join('');el.querySelectorAll('[data-queue-play]').forEach(b=>b.onclick=()=>{audioIndex=Number(b.dataset.queuePlay);startOnline()});el.querySelectorAll('[data-queue-remove]').forEach(b=>b.onclick=()=>{const n=Number(b.dataset.queueRemove);audioQueue.splice(n,1);if(n<audioIndex)audioIndex--;else if(n===audioIndex){if(!audioQueue.length)return stopOnline();audioIndex=Math.min(n,audioQueue.length-1);startOnline(false)}drawQueue()});$('#online-previous').disabled=audioIndex<=0;$('#online-next').disabled=audioIndex>=audioQueue.length-1}
-window.stopOnline=function(){playVersion++;clearTimeout(advanceTimer);onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();audioQueue=[];audioIndex=-1;recordedReference=null;$('#online-player').hidden=true;document.body.classList.remove('has-online-player')};
+window.stopOnline=function(){playVersion++;clearTimeout(advanceTimer);onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();audioQueue=[];audioIndex=-1;recordedReference=null;$('#online-player').hidden=true;document.body.classList.remove('has-online-player');playerState('idle');if('mediaSession' in navigator)navigator.mediaSession.metadata=null};
 window.resetOnlineSession=function(){stopOnline();cancelOnlineSearch();searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};onlineData={saves:[],playlists:[],items:{},recent:[]}};
 window.pauseOnline=()=>onlineAudio.pause();
 $('#close-online').onclick=()=>stopOnline();$('#online-previous').onclick=()=>{if(audioIndex>0){audioIndex--;startOnline()}};$('#online-next').onclick=()=>{if(audioIndex<audioQueue.length-1){audioIndex++;startOnline()}};
-$('#queue-toggle').onclick=()=>{const el=$('#online-queue');el.hidden=!el.hidden;$('#queue-toggle').setAttribute('aria-expanded',String(!el.hidden));$('#queue-toggle').textContent=el.hidden?'Ver cola':'Ocultar cola'};
+$('#queue-toggle').onclick=()=>{const el=$('#online-queue');el.hidden=!el.hidden;$('#queue-toggle').setAttribute('aria-expanded',String(!el.hidden));$('#queue-toggle').setAttribute('aria-label',el.hidden?'Ver cola':'Ocultar cola')};
 
 function privacy(){shell(`<h1>Privacidad y condiciones</h1><section class="panel"><h2>Tu música online, tus listas privadas</h2><p>IVOX guarda cuentas, contraseñas mediante hash, sesiones y referencias de favoritos, playlists, escuchar después, historial y búsquedas recientes en su servidor. Se comparten únicamente entre tus sesiones.</p><p>Las consultas se envían a la instancia privada de Piped o a Audius. El audio se transmite sin guardarlo en disco, mediante un enlace temporal protegido por tu sesión. Los proveedores reciben las peticiones y la dirección IP del servidor; las imágenes externas pueden recibir la IP de tu navegador.</p><p>IVOX no necesita tus credenciales de YouTube o Audius. No modifica tus cuentas de esos servicios. Piped no es un servicio oficial de YouTube; puede dejar de funcionar o ser bloqueado.</p><p>Puedes borrar referencias, playlists, recientes e historial. Este botón elimina tus referencias online de IVOX; conserva tu cuenta, playlists vacías y archivos locales.</p><button id="clear-online-data" class="danger">Borrar mis datos de biblioteca online</button></section>`);$('#clear-online-data').onclick=()=>confirmAction('¿Borrar tus datos online de IVOX?','Se eliminarán favoritos, escuchar después, historial, búsquedas y referencias de todas tus playlists. No se puede deshacer.',async()=>{await api('/api/online/library','DELETE');stopOnline();notify('Datos online eliminados de IVOX.')})}

@@ -10,10 +10,11 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
@@ -23,6 +24,19 @@ ROOT = Path(__file__).resolve().parent
 load_environment(ROOT / '.env')
 DATA = Path(os.environ.get('ONDA_DATA', ROOT / 'data')).resolve()
 MB = 1024**2
+# Sessions slide: each day of use pushes expiry 180 days ahead, so a phone that
+# opens IVOX now and then stays signed in until the user logs out.
+SESSION_SECONDS = 180*86400
+# Audio relays re-check the session for every chunk; with a cloud database each
+# check is a network round trip, so verified sessions are reused briefly.
+SESSION_CACHE = {}; SESSION_CACHE_SECONDS = 20; session_guard = threading.Lock()
+def forget_sessions(token=None):
+    with session_guard:
+        if token: SESSION_CACHE.pop(token, None)
+        else: SESSION_CACHE.clear()
+def session_cookie(token):
+    secure='; Secure' if os.environ.get('ONDA_SECURE_COOKIE')=='1' else ''
+    return f'onda={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}{secure}'
 TURSO = turso.Client(os.environ['TURSO_DATABASE_URL'], os.environ['TURSO_AUTH_TOKEN']) if os.environ.get('TURSO_DATABASE_URL') and os.environ.get('TURSO_AUTH_TOKEN') else None
 
 def now(): return int(time.time())
@@ -123,6 +137,7 @@ class Handler(BaseHTTPRequestHandler):
     def send(self,status,data,cookie=None):
         raw=json.dumps(data,ensure_ascii=False).encode()
         self.send_response(status); self.headers_common('application/json; charset=utf-8')
+        cookie=cookie or getattr(self,'renewed_cookie',None)
         if cookie: self.send_header('Set-Cookie',cookie)
         self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
 
@@ -145,9 +160,17 @@ class Handler(BaseHTTPRequestHandler):
         cookie=SimpleCookie(); cookie.load(self.headers.get('Cookie',''))
         token=cookie.get('onda')
         hashed=hashlib.sha256((token.value if token else '').encode()).hexdigest()
-        s=c.execute('SELECT * FROM sessions WHERE token=? AND expires>?',(hashed,now())).fetchone()
-        require(s is not None,'Inicia sesión.',401)
-        u=c.execute('SELECT * FROM users WHERE id=?',(s['user_id'],)).fetchone()
+        with session_guard: hit=SESSION_CACHE.get(hashed)
+        if hit and hit[2]>time.monotonic() and hit[1]['expires']>now(): u,s=hit[:2]
+        else:
+            s=c.execute('SELECT * FROM sessions WHERE token=? AND expires>?',(hashed,now())).fetchone()
+            require(s is not None,'Inicia sesión.',401)
+            u=c.execute('SELECT * FROM users WHERE id=?',(s['user_id'],)).fetchone()
+            s=dict(s)
+            if s['expires']<now()+SESSION_SECONDS-86400:
+                s['expires']=now()+SESSION_SECONDS
+                c.execute('UPDATE sessions SET expires=? WHERE token=?',(s['expires'],hashed)); self.renewed_cookie=session_cookie(token.value)
+            with session_guard: SESSION_CACHE[hashed]=(u,s,time.monotonic()+SESSION_CACHE_SECONDS)
         require(u['status']=='active','Esta cuenta está suspendida.',403)
         if write: require(hmac.compare_digest(self.headers.get('X-CSRF-Token',''),s['csrf']),'Sesión inválida. Recarga la página.',403)
         return u,s
@@ -215,13 +238,12 @@ class Handler(BaseHTTPRequestHandler):
             u=c.execute('SELECT * FROM users WHERE id=?',(recovery['user_id'],)).fetchone();uid=u['id']
             c.execute("UPDATE users SET password=?,role='admin',status='active' WHERE id=?",(password_hash(password),uid))
             c.execute('DELETE FROM admin_recovery WHERE user_id=?',(uid,))
-            c.execute('DELETE FROM sessions WHERE user_id=?',(uid,))
+            c.execute('DELETE FROM sessions WHERE user_id=?',(uid,)); forget_sessions()
             c.execute('DELETE FROM login_attempts WHERE key=?',(self.client_address[0],))
             audit(c,uid,uid,'admin_recovered','Recuperación con enlace local temporal de un solo uso',{'role':u['role'],'status':u['status']},{'role':'admin','status':'active','password_changed':True,'previous_sessions_revoked':True})
             session_token=secrets.token_urlsafe(32);csrf=secrets.token_urlsafe(32)
-            c.execute('INSERT INTO sessions VALUES(?,?,?,?)',(hashlib.sha256(session_token.encode()).hexdigest(),uid,csrf,now()+7*86400));c.commit()
-            secure='; Secure' if os.environ.get('ONDA_SECURE_COOKIE')=='1' else ''
-            self.send(200,{'redirect':'/admin'},f'onda={session_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800{secure}');return
+            c.execute('INSERT INTO sessions VALUES(?,?,?,?)',(hashlib.sha256(session_token.encode()).hexdigest(),uid,csrf,now()+SESSION_SECONDS));c.commit()
+            self.send(200,{'redirect':'/admin'},session_cookie(session_token));return
         if path in ('/api/login','/api/register') and method=='POST':
             b=json.loads(self.body()); email=str(b.get('email','')).strip().lower(); password=b.get('password','')
             require(re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email) and len(email)<=254,'Email inválido.')
@@ -243,15 +265,14 @@ class Handler(BaseHTTPRequestHandler):
             require(u['status']=='active','Esta cuenta está suspendida.',403)
             c.execute('DELETE FROM login_attempts WHERE key=?',(key,))
             token=secrets.token_urlsafe(32); csrf=secrets.token_urlsafe(32)
-            c.execute('INSERT INTO sessions VALUES(?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),u['id'],csrf,now()+7*86400))
+            c.execute('INSERT INTO sessions VALUES(?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),u['id'],csrf,now()+SESSION_SECONDS))
             c.commit()
-            secure='; Secure' if os.environ.get('ONDA_SECURE_COOKIE')=='1' else ''
-            self.send(200,{'user':user_view(c,u),'csrf':csrf},f'onda={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800{secure}'); return
+            self.send(200,{'user':user_view(c,u),'csrf':csrf},session_cookie(token)); return
         u,s=self.session(c,method!='GET')
         uid=u['id']
         if path=='/api/me' and method=='GET': self.send(200,{'user':user_view(c,u),'csrf':s['csrf'],'plans': [dict(r) for r in c.execute('SELECT * FROM plans')]}); return
         if path=='/api/logout' and method=='POST':
-            c.execute('DELETE FROM sessions WHERE token=?',(s['token'],)); c.commit(); self.send(200,{},'onda=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return
+            c.execute('DELETE FROM sessions WHERE token=?',(s['token'],)); c.commit(); forget_sessions(s['token']); self.send(200,{},'onda=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return
         if path.startswith('/api/admin'):
             require(u['role']=='admin','Acceso reservado a administradores.',403)
             return self.admin(c,u,path,method)
@@ -272,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
                 connection,response,mime=resolver.open(video_id,range_header)
             except AudioUnavailable:
                 self.send(502,{'error':'audio_unavailable'});return
-            return self.relay(c,connection,response,mime,1)
+            return self.relay(c,connection,response,mime,1,self.download_name())
         if path.startswith('/api/online/'):
             return self.online(c,u,path,method)
         if path=='/api/library' and method=='GET':
@@ -353,7 +374,7 @@ class Handler(BaseHTTPRequestHandler):
             range_header=self.headers.get('Range')
             require(not range_header or re.fullmatch(r'bytes=\d*-\d*',range_header),'Rango inválido.',416)
             connection,response=provider.media(uid,m[1],{'Range':range_header} if range_header else {})
-            return self.relay(c,connection,response,response.getheader('Content-Type','audio/mpeg'),provider.tickets[m[1]].get('level',4))
+            return self.relay(c,connection,response,response.getheader('Content-Type','audio/mpeg'),provider.tickets[m[1]].get('level',4),self.download_name())
         m=re.fullmatch(r'/api/online/art/(piped:[A-Za-z0-9_-]{11})',path)
         if m and method=='GET':
             row=c.execute('SELECT metadata FROM online_catalog WHERE video_id=?',(m[1],)).fetchone();require(row,'Portada no encontrada.',404)
@@ -411,10 +432,20 @@ class Handler(BaseHTTPRequestHandler):
             c.commit();self.send(200,{});return
         raise Problem(404,'Ruta no encontrada.')
 
-    def relay(self,c,connection,response,mime,level):
+    def download_name(self):
+        # ?download=<title> turns a stream into a file save; the name is only a label.
+        query=parse_qs(urlparse(self.path).query)
+        if 'download' not in query:return None
+        name=re.sub(r'[\x00-\x1f\\/:*?"<>|]+',' ',query['download'][0]).strip()[:120]
+        return name or 'IVOX'
+
+    def relay(self,c,connection,response,mime,level,download=None):
         try:
             self.send_response(response.status);self.headers_common(mime)
             self.send_header('X-IVOX-Audio-Level',str(level))
+            if download:
+                extension={'audio/mp4':'m4a','audio/webm':'webm','audio/mpeg':'mp3','audio/ogg':'ogg'}.get(mime.split(';')[0].strip(),'audio')
+                self.send_header('Content-Disposition',f"attachment; filename=\"IVOX.{extension}\"; filename*=UTF-8''{quote(download+'.'+extension)}")
             for header in ('Content-Length','Content-Range','Accept-Ranges'):
                 value=response.getheader(header)
                 if value:self.send_header(header,value)
@@ -472,7 +503,7 @@ class Handler(BaseHTTPRequestHandler):
         if action in ('revoke','suspend'): require(b.get('confirm') is True,'Confirma esta acción.')
         if t['role']=='admin' and t['status']=='active' and (after['role']!='admin' or after['status']!='active'):
             require(c.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND status='active'").fetchone()[0]>1,'Debe quedar un administrador activo.',409)
-        c.execute('UPDATE users SET role=?,status=?,plan=?,expires=? WHERE id=?',(after['role'],after['status'],after['plan'],after['expires'],t['id']))
+        c.execute('UPDATE users SET role=?,status=?,plan=?,expires=? WHERE id=?',(after['role'],after['status'],after['plan'],after['expires'],t['id'])); forget_sessions()
         audit(c,u['id'],t['id'],action,reason,before,after); c.commit(); self.send(200,user_view(c,c.execute('SELECT * FROM users WHERE id=?',(t['id'],)).fetchone()))
 
     def stream(self,t):
