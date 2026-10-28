@@ -73,7 +73,7 @@ try:
         page.get_by_label('Nombre',exact=True).fill('Niveles · Referencia real');page.get_by_role('button',name='Guardar',exact=True).click();page.get_by_text('Playlist creada y referencia guardada.',exact=True).wait_for()
         second=browser.new_context(viewport={'width':390,'height':844});mobile=second.new_page();mobile.goto(url)
         mobile.get_by_label('Email',exact=True).fill('levels-test@example.com');mobile.get_by_label('Contraseña',exact=True).fill(password);mobile.get_by_role('button',name='Entrar',exact=True).click()
-        mobile.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for();mobile.get_by_role('link',name='♫ Mi biblioteca',exact=True).click();mobile.locator('.video-row').first.wait_for()
+        mobile.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for();mobile.get_by_role('link',name='Biblioteca',exact=True).click();mobile.locator('.video-row').first.wait_for()
         assert mobile.locator('.video-row').first.get_attribute('data-video')==rick['id']
         mobile.get_by_role('button',name='Playlists',exact=True).click();mobile.get_by_role('button',name='Niveles · Referencia real',exact=False).click();mobile.locator('.video-row').first.wait_for()
         assert mobile.locator('.video-row').first.get_attribute('data-video')==rick['id'];report['favorites_playlist_sync']=True

@@ -15,11 +15,46 @@ function unlockAudio(){
   onlineAudio.src='/silence.wav';onlineAudio.play().then(()=>{if(onlineAudio.getAttribute('src')==='/silence.wav'){onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load()}}).catch(()=>{});
 }
 ['click','touchend','keydown'].forEach(t=>document.addEventListener(t,unlockAudio,true));
-function prefetchNext(){prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+3))}
+function prefetchNext(){prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+4))}
+// Songs heard for a few seconds are stored whole in Cache Storage, so replaying a
+// recent one starts instantly from the device. cachedIds mirrors the cache so the
+// common (uncached) path stays synchronous and keeps the click's play gesture.
+const AUDIO_CACHE='ivox-audio-v1',AUDIO_KEEP=25,AUDIO_MAX_BYTES=25*1024*1024;
+const audioKey=id=>'/ivox-audio/'+encodeURIComponent(id);
+let cachedIds=new Set(),storingAudio=new Set(),blobUrl=null;
+const audioOrder=()=>{try{return JSON.parse(localStorage.getItem('ivox-audio-order')||'[]')}catch{return []}};
+const saveAudioOrder=order=>{try{localStorage.setItem('ivox-audio-order',JSON.stringify(order))}catch{}};
+if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.keys()).then(keys=>{cachedIds=new Set(keys.map(r=>decodeURIComponent(new URL(r.url).pathname.slice(12))))}).catch(()=>{});
+async function localAudio(item){
+  try{
+    const response=await(await caches.open(AUDIO_CACHE)).match(audioKey(item.id));
+    if(!response){cachedIds.delete(item.id);return null}
+    saveAudioOrder([item.id,...audioOrder().filter(id=>id!==item.id)]);
+    if(blobUrl)URL.revokeObjectURL(blobUrl);
+    return blobUrl=URL.createObjectURL(await response.blob());
+  }catch{return null}
+}
+async function keepAudio(item,url){
+  if(!item||!url||url.startsWith('blob:')||storingAudio.has(item.id)||cachedIds.has(item.id)||!('caches' in window)||navigator.connection?.saveData)return;
+  storingAudio.add(item.id);
+  try{
+    const response=await fetch(url,{credentials:'same-origin'}),size=Number(response.headers.get('Content-Length')||0);
+    // Long mixes would crowd out dozens of songs; they keep streaming instead.
+    if(response.status!==200||!size||size>AUDIO_MAX_BYTES){response.body?.cancel();return}
+    const blob=await response.blob(),cache=await caches.open(AUDIO_CACHE);
+    await cache.put(audioKey(item.id),new Response(blob,{headers:{'Content-Type':response.headers.get('Content-Type')||blob.type||'audio/mpeg'}}));
+    cachedIds.add(item.id);
+    const order=[item.id,...audioOrder().filter(id=>id!==item.id&&cachedIds.has(id))];
+    for(const id of cachedIds)if(!order.includes(id))order.push(id);
+    for(const old of order.splice(AUDIO_KEEP)){cachedIds.delete(old);cache.delete(audioKey(old)).catch(()=>{})}
+    saveAudioOrder(order);
+  }catch{}finally{storingAudio.delete(item.id)}
+}
+function forgetAudio(item){cachedIds.delete(item.id);if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.delete(audioKey(item.id))).catch(()=>{})}
 // Resolving a YouTube audio URL takes seconds; doing it before the tap (top results,
 // hover, touch) makes Play start almost instantly. Each id is warmed once per page.
 const prefetched=new Set();
-function prefetchAudio(items){const ids=items.filter(v=>v&&v.provider==='piped'&&!prefetched.has(v.provider_id)).slice(0,2).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.add(id));api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
+function prefetchAudio(items){const ids=items.filter(v=>v&&v.provider==='piped'&&!prefetched.has(v.provider_id)&&!cachedIds.has(v.id)).slice(0,3).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.add(id));api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
 const clock=n=>Number.isFinite(n)?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`:'0:00';
 function playerState(state){
   $('#online-player').dataset.state=state;const playing=state==='playing';
@@ -66,7 +101,7 @@ function drawSearch(){
   const el=$('#search-results');if(!el||location.pathname!=='/')return;
   if(searchView.loading){el.innerHTML='<div class="empty" role="status">Buscando música online…</div>';return}
   if(searchView.error){el.innerHTML=`<div class="empty error-state"><h2>No se pudo completar la búsqueda</h2><p>${esc(searchView.error.message)}</p><div class="tools"><button id="retry-search">Volver a intentar</button><button id="try-audius">Buscar en Audius</button></div></div>`;$('#retry-search').onclick=()=>runSearch(searchView.query,false,searchView.source);$('#try-audius').onclick=()=>{$('#search-source').value='audius';runSearch(searchView.query,false,'audius')};return}
-  if(!searchView.query){el.innerHTML='<div class="discovery-empty"><span aria-hidden="true">≋</span><h2>Una búsqueda. Otra forma de sentir.</h2><p class="muted">Escribe ese nombre que no te quitas de la cabeza.</p></div>';return}
+  if(!searchView.query){el.innerHTML='<div class="discovery-empty">'+LOGO+'<h2>Una búsqueda. Otra forma de sentir.</h2><p class="muted">Escribe ese nombre que no te quitas de la cabeza.</p></div>';return}
   const artists=searchView.artists||[],kind=searchView.filter||'songs',labels={ytmusic:'YouTube Music',youtube:'YouTube Data API',piped:'Piped',audius:'Audius'};
   const artistCards=artists.length?artists.map(a=>`<article class="video-row"><div class="video-art">${a.thumbnail?`<img src="${esc(a.thumbnail)}" alt="" loading="lazy">`:'♫'}</div><div class="video-info"><h3>${esc(a.name)}</h3><p>${esc(a.source)}</p></div><button data-artist="${esc(a.name)}">Ver canciones</button></article>`).join(''):'<div class="empty"><h2>No se encontraron artistas</h2><p>Prueba otro nombre o busca canciones.</p></div>';
   el.innerHTML=`<div class="results-heading"><h2>Resultados para «${esc(searchView.query)}»</h2><small>${kind==='artists'?artists.length+' artistas':searchView.items.length+' canciones'} · ${esc(labels[searchView.resolved]||searchView.resolved)}</small></div>${searchView.notice?`<p class="source-notice" role="status">${esc(searchView.notice)}</p>`:''}<div id="online-results">${kind==='artists'?artistCards:videoCards(searchView.items)}</div>${searchView.next?'<button id="more-results" class="load-more">Mostrar más resultados</button>':''}`;
@@ -94,7 +129,7 @@ function bindVideoCards(root,items,playlist=null){
   root.querySelectorAll('[data-discover]').forEach(a=>a.onclick=e=>{e.preventDefault();history.pushState({},'','/');render().catch(e=>notify(e.message))});
   root.querySelectorAll('[data-online-play]').forEach(b=>b.onclick=()=>{const id=b.dataset.onlinePlay;if(audioQueue[audioIndex]?.id===id&&!$('#online-player').hidden){toggleOnline();return}audioQueue=[...items];audioIndex=items.findIndex(v=>v.id===id);failedReferences.clear();startOnline()});
   root.querySelectorAll('.video-row[data-video]').forEach(row=>{const warm=()=>prefetchAudio([videoById(row.dataset.video)]);row.addEventListener('pointerenter',warm,{once:true});row.addEventListener('touchstart',warm,{once:true,passive:true})});
-  if(root.querySelector('.video-row'))prefetchAudio(items.slice(0,2));syncCards();
+  if(root.querySelector('.video-row'))prefetchAudio(items.slice(0,3));syncCards();
   root.querySelectorAll('[data-online-fav]').forEach(b=>b.onclick=()=>perform(async()=>{const id=b.dataset.onlineFav,next=!savedVideo(id).favorite;await api('/api/online/items/'+id,'PATCH',{favorite:next});onlineData=await api('/api/online/library');if(location.pathname==='/')drawSearch();else drawOnlineLibrary();notify(next?'Guardado en favoritos de IVOX.':'Quitado de favoritos de IVOX.')}));
   root.querySelectorAll('[data-online-menu]').forEach(b=>b.onclick=()=>onlineOptions(videoById(b.dataset.onlineMenu)));
   root.querySelectorAll('[data-online-remove]').forEach(b=>b.onclick=()=>perform(async()=>{await api('/api/online/playlists/'+playlist+'/items','DELETE',{video_id:b.dataset.onlineRemove});await onlineLibrary()}));
@@ -134,22 +169,25 @@ async function startOnline(autostart=true,minimumLevel=1){
   nowPlayingArt(item);progress(0,0);playerState('loading');drawQueue();
   try{
     let result;
+    // Level 0: a copy on this device (the element was already unlocked by an earlier gesture).
+    if(minimumLevel<=1&&cachedIds.has(item.id)){const local=await localAudio(item);if(version!==playVersion||!me)return;if(local)result={url:local,level:0,source:'device'}}
     // Level 1 plays in the same tick as the click (no await before play), so the gesture is kept;
     // the server starts relaying bytes as soon as yt-dlp returns the URL. Failures arrive via onerror.
-    if(item.provider==='piped'&&minimumLevel<=1)result={url:'/api/audio/'+item.provider_id,level:1,source:'yt-dlp'};
-    else{
+    if(!result&&item.provider==='piped'&&minimumLevel<=1)result={url:'/api/audio/'+item.provider_id,level:1,source:'yt-dlp'};
+    else if(!result){
       onlineAudio.removeAttribute('src');onlineAudio.load();
       const format=onlineAudio.canPlayType('audio/mp4')?'mp4':'webm';
       result=await api('/api/online/play/'+encodeURIComponent(item.id).replace('%3A',':')+'?format='+format+(minimumLevel>=3?'&minimum_level=3':''));
       if(version!==playVersion||!me)return;
     }
-    activeLevel=result.level||4;activeEngine=result.source==='yt-dlp'?'yt-dlp':result.source==='piped'?'Piped':'Audius';
+    activeLevel=result.level??4;activeEngine={device:'este dispositivo','yt-dlp':'yt-dlp',piped:'Piped'}[result.source]||'Audius';
+    if(blobUrl&&result.url!==blobUrl){URL.revokeObjectURL(blobUrl);blobUrl=null}
     onlineAudio.src=result.url;onlineAudio.load();resolutionBusy=false;
     if(!autostart){playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
     try{await onlineAudio.play()}catch(e){if(version!==playVersion)return;if(e.name==='NotAllowedError'){playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel()}
   }catch(e){if(version===playVersion&&me){if(await tryAudiusFallback(item,version,autostart))return;if(version===playVersion){resolutionBusy=false;playbackFailure('No disponible, elige otro.')}}}
 }
-async function retryAudioLevel(){if(resolutionBusy)return;const item=audioQueue[audioIndex];if(!item)return;if(item.provider==='piped'&&activeLevel<3){const next=activeLevel===1?2:3;resolutionBusy=true;startOnline(true,next);return}const version=playVersion;resolutionBusy=true;if(await tryAudiusFallback(item,version))return;if(version===playVersion){resolutionBusy=false;playbackFailure('No disponible, elige otro.')}}
+async function retryAudioLevel(){if(resolutionBusy)return;const item=audioQueue[audioIndex];if(!item)return;if(activeLevel===0){forgetAudio(item);resolutionBusy=true;startOnline(true,1);return}if(item.provider==='piped'&&activeLevel<3){const next=activeLevel===1?2:3;resolutionBusy=true;startOnline(true,next);return}const version=playVersion;resolutionBusy=true;if(await tryAudiusFallback(item,version))return;if(version===playVersion){resolutionBusy=false;playbackFailure('No disponible, elige otro.')}}
 async function tryAudiusFallback(item,version,autostart=true){
   if(item.provider!=='piped')return false;
   resolutionBusy=true;
@@ -171,7 +209,7 @@ function playbackFailure(message){
   if(current.provider==='piped'&&searchView.source==='auto'&&[...failedReferences].filter(id=>id.startsWith('piped:')).length>=3){perform(fallback);return}
   if(hasNext){clearTimeout(advanceTimer);advanceTimer=setTimeout(()=>{if(!me)return;audioIndex++;startOnline()},1800)}
 }
-onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current)return;playerState('playing');$('#playback-status').textContent='Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;prefetchNext();perform(async()=>{await api('/api/online/items/'+current.id,'PATCH',{played:true});onlineData=await api('/api/online/library')})}};
+onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current)return;playerState('playing');$('#playback-status').textContent=activeLevel===0?'Reproduciendo al instante desde este dispositivo':'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;prefetchNext();perform(async()=>{await api('/api/online/items/'+current.id,'PATCH',{played:true});onlineData=await api('/api/online/library')})}};
 onlineAudio.onerror=()=>{if(onlineAudio.getAttribute('src'))retryAudioLevel()};
 onlineAudio.onended=()=>{if(audioIndex<audioQueue.length-1){audioIndex++;startOnline()}else playerState('paused')};
 onlineAudio.onpause=()=>{if(!resolutionBusy&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&$('#online-player').dataset.state!=='loading')playerState('paused')};
@@ -182,7 +220,14 @@ function progress(time,total){
   const ratio=total>0?Math.min(1,time/total):0;$('#np-fill').style.width=ratio*100+'%';if(!seeking)$('#np-range').value=Math.round(ratio*1000);
   const buffered=onlineAudio.buffered;$('#np-buffer').style.width=(total>0&&buffered.length?Math.min(1,buffered.end(buffered.length-1)/total)*100:0)+'%';
 }
-onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav')progress(onlineAudio.currentTime,onlineAudio.duration)};
+onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=>{
+  if(onlineAudio.getAttribute('src')==='/silence.wav')return;progress(onlineAudio.currentTime,onlineAudio.duration);
+  if(activeLevel>0&&onlineAudio.currentTime>8)keepAudio(audioQueue[audioIndex],onlineAudio.currentSrc);
+};
+// Phones show a compact bar; tapping the song or the chevron reveals every control.
+function toggleExpanded(){const player=$('#online-player'),open=!player.hasAttribute('data-expanded');player.toggleAttribute('data-expanded',open);$('#np-expand').setAttribute('aria-expanded',String(open))}
+$('#np-expand').onclick=toggleExpanded;
+['#online-player .player-heading','#online-player .np-art'].forEach(s=>$(s).onclick=()=>{if(matchMedia('(max-width:760px)').matches)toggleExpanded()});
 $('#np-range').oninput=e=>{seeking=true;const total=onlineAudio.duration;if(total>0){$('#np-fill').style.width=e.target.value/10+'%';$('#np-current').textContent=clock(total*e.target.value/1000)}};
 $('#np-range').onchange=e=>{seeking=false;const total=onlineAudio.duration;if(total>0)onlineAudio.currentTime=total*e.target.value/1000};
 function toggleOnline(){
@@ -199,10 +244,10 @@ if('mediaSession' in navigator){
 }
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!$('#online-player').hidden&&!e.target.closest('input,textarea,select,button,[contenteditable]')){e.preventDefault();toggleOnline()}});
 function drawQueue(){const el=$('#online-queue');el.innerHTML=audioQueue.map((v,i)=>`<li class="${i===audioIndex?'current':''}"><button data-queue-play="${i}" ${i===audioIndex?'aria-current="true"':''}>${esc(v.title)} · ${esc(v.source||v.provider)}</button><button data-queue-remove="${i}" aria-label="Quitar ${esc(v.title)} de la cola">×</button></li>`).join('');el.querySelectorAll('[data-queue-play]').forEach(b=>b.onclick=()=>{audioIndex=Number(b.dataset.queuePlay);startOnline()});el.querySelectorAll('[data-queue-remove]').forEach(b=>b.onclick=()=>{const n=Number(b.dataset.queueRemove);audioQueue.splice(n,1);if(n<audioIndex)audioIndex--;else if(n===audioIndex){if(!audioQueue.length)return stopOnline();audioIndex=Math.min(n,audioQueue.length-1);startOnline(false)}drawQueue()});$('#online-previous').disabled=audioIndex<=0;$('#online-next').disabled=audioIndex>=audioQueue.length-1}
-window.stopOnline=function(){playVersion++;clearTimeout(advanceTimer);onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();audioQueue=[];audioIndex=-1;recordedReference=null;$('#online-player').hidden=true;document.body.classList.remove('has-online-player');playerState('idle');if('mediaSession' in navigator)navigator.mediaSession.metadata=null};
+window.stopOnline=function(){playVersion++;clearTimeout(advanceTimer);onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();audioQueue=[];audioIndex=-1;recordedReference=null;if(blobUrl){URL.revokeObjectURL(blobUrl);blobUrl=null}$('#online-player').hidden=true;$('#online-player').removeAttribute('data-expanded');document.body.classList.remove('has-online-player');playerState('idle');if('mediaSession' in navigator)navigator.mediaSession.metadata=null};
 window.resetOnlineSession=function(){stopOnline();cancelOnlineSearch();searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};onlineData={saves:[],playlists:[],items:{},recent:[]}};
 window.pauseOnline=()=>onlineAudio.pause();
 $('#close-online').onclick=()=>stopOnline();$('#online-previous').onclick=()=>{if(audioIndex>0){audioIndex--;startOnline()}};$('#online-next').onclick=()=>{if(audioIndex<audioQueue.length-1){audioIndex++;startOnline()}};
 $('#queue-toggle').onclick=()=>{const el=$('#online-queue');el.hidden=!el.hidden;$('#queue-toggle').setAttribute('aria-expanded',String(!el.hidden));$('#queue-toggle').setAttribute('aria-label',el.hidden?'Ver cola':'Ocultar cola')};
 
-function privacy(){shell(`<h1>Privacidad y condiciones</h1><section class="panel"><h2>Tu música online, tus listas privadas</h2><p>IVOX guarda cuentas, contraseñas mediante hash, sesiones y referencias de favoritos, playlists, escuchar después, historial y búsquedas recientes en su servidor. Se comparten únicamente entre tus sesiones.</p><p>Las consultas se envían a la instancia privada de Piped o a Audius. El audio se transmite sin guardarlo en disco, mediante un enlace temporal protegido por tu sesión. Los proveedores reciben las peticiones y la dirección IP del servidor; las imágenes externas pueden recibir la IP de tu navegador.</p><p>IVOX no necesita tus credenciales de YouTube o Audius. No modifica tus cuentas de esos servicios. Piped no es un servicio oficial de YouTube; puede dejar de funcionar o ser bloqueado.</p><p>Puedes borrar referencias, playlists, recientes e historial. Este botón elimina tus referencias online de IVOX; conserva tu cuenta, playlists vacías y archivos locales.</p><button id="clear-online-data" class="danger">Borrar mis datos de biblioteca online</button></section>`);$('#clear-online-data').onclick=()=>confirmAction('¿Borrar tus datos online de IVOX?','Se eliminarán favoritos, escuchar después, historial, búsquedas y referencias de todas tus playlists. No se puede deshacer.',async()=>{await api('/api/online/library','DELETE');stopOnline();notify('Datos online eliminados de IVOX.')})}
+function privacy(){shell(`<h1>Privacidad y condiciones</h1><section class="panel"><h2>Tu música online, tus listas privadas</h2><p>IVOX guarda cuentas, contraseñas mediante hash, sesiones y referencias de favoritos, playlists, escuchar después, historial y búsquedas recientes en su servidor. Se comparten únicamente entre tus sesiones.</p><p>Las consultas se envían a la instancia privada de Piped o a Audius. El audio se transmite sin guardarlo en disco, mediante un enlace temporal protegido por tu sesión. Para que repetir una canción sea instantáneo, este dispositivo guarda una copia de las 25 últimas que escuchaste (hasta 25 MB cada una) en el almacenamiento del navegador; no se envía a ningún sitio y se borra al limpiar los datos del sitio. Los proveedores reciben las peticiones y la dirección IP del servidor; las imágenes externas pueden recibir la IP de tu navegador.</p><p>IVOX no necesita tus credenciales de YouTube o Audius. No modifica tus cuentas de esos servicios. Piped no es un servicio oficial de YouTube; puede dejar de funcionar o ser bloqueado.</p><p>Puedes borrar referencias, playlists, recientes e historial. Este botón elimina tus referencias online de IVOX; conserva tu cuenta, playlists vacías y archivos locales.</p><button id="clear-online-data" class="danger">Borrar mis datos de biblioteca online</button></section>`);$('#clear-online-data').onclick=()=>confirmAction('¿Borrar tus datos online de IVOX?','Se eliminarán favoritos, escuchar después, historial, búsquedas y referencias de todas tus playlists. No se puede deshacer.',async()=>{await api('/api/online/library','DELETE');stopOnline();notify('Datos online eliminados de IVOX.')})}

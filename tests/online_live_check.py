@@ -62,10 +62,10 @@ try:
         mobile_context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1')
         mobile=mobile_context.new_page();mobile.on('pageerror',lambda e:report['page_errors'].append(str(e)))
         mobile.goto(url);mobile.get_by_label('Email',exact=True).fill('hybrid-test@example.com');mobile.get_by_label('Contraseña',exact=True).fill(password);mobile.get_by_role('button',name='Entrar',exact=True).click();mobile.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for()
-        mobile.get_by_role('link',name='♫ Mi biblioteca',exact=True).click();mobile.locator('.video-row').first.wait_for();assert mobile.locator('.video-row').first.get_attribute('data-video')==reference
+        mobile.get_by_role('link',name='Biblioteca',exact=True).click();mobile.locator('.video-row').first.wait_for();assert mobile.locator('.video-row').first.get_attribute('data-video')==reference
         mobile.get_by_role('button',name='Playlists',exact=True).click();mobile.get_by_role('button',name='Feid · Referencias reales',exact=False).click();mobile.locator('.video-row').first.wait_for();assert mobile.locator('.video-row').first.get_attribute('data-video')==reference
         report['checks']['5_second_session_sync']={'passed':True,'reference':reference};mobile.screenshot(path=str(out/'hybrid-library-mobile.png'),full_page=True)
-        mobile.get_by_role('link',name='⌕ Descubrir',exact=True).click();mobile.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for();search(mobile,'audius')
+        mobile.get_by_role('link',name='Descubrir',exact=True).click();mobile.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for();search(mobile,'audius')
         mobile.locator('[data-online-play]').first.click();mobile.wait_for_function('() => !!onlineAudio.getAttribute("src")',timeout=25000)
         assert mobile.evaluate('() => onlineAudio.paused')
         mobile.locator('#np-toggle').click()
@@ -74,7 +74,7 @@ try:
         assert mobile.evaluate('document.documentElement.scrollWidth<=innerWidth');mobile.screenshot(path=str(out/'hybrid-player-mobile.png'),full_page=True)
         report['checks']['6_mobile_gesture_and_persistence']={'passed':True,'engine':'Chromium, viewport and iPhone UA emulated; not physical iPhone','current_time':mobile.evaluate('() => onlineAudio.currentTime')}
         mobile.locator('#close-online').click()
-        page.get_by_role('link',name='⌕ Descubrir',exact=True).click();page.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for();search(page,'audius')
+        page.get_by_role('link',name='Descubrir',exact=True).click();page.get_by_role('heading',name='¿Qué quieres escuchar?',exact=True).wait_for();search(page,'audius')
         # A deliberate unavailable-track failure, isolated to this test server.
         original_stream=onda.provider.stream;failed_id=page.locator('.video-row').first.get_attribute('data-video')
         def unavailable(c,uid,ref,*args):

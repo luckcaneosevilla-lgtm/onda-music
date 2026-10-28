@@ -25,7 +25,7 @@ class YtDlpResolver:
     def __init__(self,spares=0):
         self.cache={};self.failures={};self.guard=threading.Lock()
         self.locks=[threading.Lock() for _ in range(32)];self.workers=threading.BoundedSemaphore(4);self.store=None
-        self.prefetching=threading.BoundedSemaphore(2);self.spare_count=spares;self.spares=[];self.spawning=threading.Lock()
+        self.prefetching=threading.BoundedSemaphore(3);self.spare_count=spares;self.spares=[];self.spawning=threading.Lock()
     def persist(self,path):
         # Resolved URLs survive restarts; rows still honour the per-URL expiry.
         self.store=str(path)

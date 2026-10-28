@@ -109,11 +109,11 @@ class OnlineTests(unittest.TestCase):
             status,r=self.client.request('/api/audio/testVideo01',extra={'Range':'bytes=0-3'});self.assertEqual(status,206);self.assertEqual(request.call_args.args[1],'bytes=0-3')
         self.assertEqual(self.client.request('/api/audio/testVideo01',extra={'Range':'bytes=-'})[0],416)
         with patch.object(onda.resolver,'prefetch') as prefetch:
-            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['testVideo01','testVideo02']})[0],202)
-            self.assertEqual([c.args[0] for c in prefetch.call_args_list],['testVideo01','testVideo02'])
-            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['a','b','c']})[0],400)
+            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['testVideo01','testVideo02','testVideo03']})[0],202)
+            self.assertEqual([c.args[0] for c in prefetch.call_args_list],['testVideo01','testVideo02','testVideo03'])
+            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['a','b','c','d']})[0],400)
             self.assertEqual(Client(self.port).request('/api/audio/prefetch','POST',{'video_ids':['testVideo01']})[0],401)
-            self.assertEqual(prefetch.call_count,2)
+            self.assertEqual(prefetch.call_count,3)
 
     def test_local_admin_recovery_expiry_single_use_and_session_revocation(self):
         link=onda.create_admin_recovery('one@test.com',self.port);token=link.split('#')[1]

@@ -146,7 +146,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control','no-store')
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Referrer-Policy','strict-origin-when-cross-origin')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self'; img-src 'self' data: https:; frame-src 'none'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; media-src 'self' blob:; img-src 'self' data: https:; frame-src 'none'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
     def body(self,limit=65536):
         size=int(self.headers.get('Content-Length','0'))
@@ -200,7 +200,7 @@ class Handler(BaseHTTPRequestHandler):
                 require(self.command=='GET','Método no permitido.',405)
                 if path=='/youtube-setup':
                     self.send(410,{'error':'La reproducción actual usa Piped y Audius. Consulta README_SECCION_REPRODUCCION.md.'});return
-                static_types={'app.js':'text/javascript','online.js':'text/javascript','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','index.html':'text/html; charset=utf-8'}
+                static_types={'app.js':'text/javascript','online.js':'text/javascript','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 self.send_response(200); self.headers_common(static_types[filename])
@@ -278,7 +278,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.admin(c,u,path,method)
         if path=='/api/audio/prefetch' and method=='POST':
             ids=json.loads(self.body()).get('video_ids')
-            require(isinstance(ids,list) and len(ids)<=2 and all(isinstance(v,str) for v in ids),'Datos inválidos.')
+            require(isinstance(ids,list) and len(ids)<=3 and all(isinstance(v,str) for v in ids),'Datos inválidos.')
             for video_id in ids:resolver.prefetch(video_id)
             self.send(202,{});return
         m=re.fullmatch(r'/api/audio/([A-Za-z0-9_-]{11})',path)

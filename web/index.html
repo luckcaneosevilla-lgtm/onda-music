@@ -2,13 +2,13 @@
 <html lang="es">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#000000"><title>IVOX · Tu música, a tu ritmo</title>
+  <meta name="theme-color" content="#0a0a0c"><title>IVOX · Tu música, a tu ritmo</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="IVOX">
   <link rel="apple-touch-icon" href="/icon-192x192.png">
-  <link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/online.css"><link rel="stylesheet" href="/player.css">
+  <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/online.css"><link rel="stylesheet" href="/player.css">
   <script src="/app.js" defer></script><script src="/online.js" defer></script>
 </head>
 <body>
@@ -22,6 +22,7 @@
         <button id="online-previous" class="np-icon" aria-label="Canción anterior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
         <button id="np-toggle" class="np-play" aria-label="Reproducir"><svg class="np-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><svg class="np-i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg><span class="np-ring" aria-hidden="true"></span></button>
         <button id="online-next" class="np-icon" aria-label="Canción siguiente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5l11 7-11 7z"/></svg></button>
+        <button id="np-expand" class="np-icon" aria-expanded="false" aria-label="Más controles"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6-1.4 1.4L12 11.8l-4.6 4.6z"/></svg></button>
       </div>
       <div class="np-extra">
         <span class="np-time"><span id="np-current">0:00</span> / <span id="np-duration">0:00</span></span>

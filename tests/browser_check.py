@@ -29,7 +29,7 @@ try:
         page.get_by_label('Contraseña',exact=True).fill('temporary-test-password')
         page.get_by_role('button',name='Crear cuenta',exact=True).click()
         page.get_by_role('heading',name='¿Qué quieres escuchar?').wait_for()
-        page.get_by_role('link',name='Archivos locales',exact=True).click()
+        page.get_by_role('link',name='Archivos',exact=True).click()
         page.get_by_role('heading',name='La música es tuya.').wait_for()
         page.get_by_role('button',name='Nueva playlist',exact=True).click()
         page.get_by_label('Nombre',exact=True).fill('En movimiento')

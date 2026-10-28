@@ -62,10 +62,10 @@ class ResolverTests(unittest.TestCase):
         r=YtDlpResolver();gate=threading.Event()
         def slow(*a,**k):gate.wait(2);return Process()
         with patch('audio_resolver.subprocess.Popen',side_effect=slow) as run:
-            for video_id in ('dQw4w9WgXcQ','kJQP7kiw5Fk','9bZkp7q19f0'):r.prefetch(video_id)
+            for video_id in ('dQw4w9WgXcQ','kJQP7kiw5Fk','9bZkp7q19f0','OPf0YbXqDm0'):r.prefetch(video_id)
             gate.set()
             for _ in range(200):
-                if len(r.cache)==2:break
+                if len(r.cache)==3:break
                 time.sleep(.01)
-            time.sleep(.05);self.assertEqual(run.call_count,2);self.assertEqual(set(r.cache),{'dQw4w9WgXcQ','kJQP7kiw5Fk'})
-            r.resolve('dQw4w9WgXcQ');self.assertEqual(run.call_count,2)
+            time.sleep(.05);self.assertEqual(run.call_count,3);self.assertEqual(set(r.cache),{'dQw4w9WgXcQ','kJQP7kiw5Fk','9bZkp7q19f0'})
+            r.resolve('dQw4w9WgXcQ');self.assertEqual(run.call_count,3)
