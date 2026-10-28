@@ -1,4 +1,4 @@
-const CACHE = 'ivox-app-shell-v7';
+const CACHE = 'ivox-app-shell-v8';
 const SHELL = ['/', '/index.html', '/style.css', '/online.css', '/player.css', '/sheet.css',
   '/app.js', '/player-controls.js', '/online.js', '/sheet.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav',
   '/fonts/cinzel.woff2', '/fonts/inter.woff2'];

@@ -8,6 +8,7 @@ let searchController,searchVersion=0,onlineSection='favorites',artistView=null;
 let audioQueue=[],audioIndex=-1,playVersion=0,recordedReference=null,advanceTimer,failedReferences=new Set(),activeLevel=0,activeEngine='',resolutionBusy=false;
 // One controller per playback: changing song aborts every request of the previous one.
 let playController=null,skipTimer=null,watchdog,failStreak=0,audioUnlocked=false,resumeAt=0,fixingDuration=false;
+let playbackWanted=false,stallTimer=null,recoveryAttempts=0,lastPlaybackTime=0,recoveryInFlight=false;
 let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioFor=null,radioPromise=null;
 const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`;
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
@@ -16,20 +17,24 @@ const isSafari=/^((?!chrome|android|crios|fxios|edg).)*safari/i.test(navigator.u
 // YouTube Music thumbnails come at 60-120 px; the same URL serves any size.
 const bigArt=url=>String(url||'').replace(/=w\d+-h\d+/,'=w600-h600');
 // iOS/Chrome only let an element start playback from a gesture; the first touch anywhere unlocks it for later async plays.
-function unlockAudio(){
+function unlockAudio(event){
   ['click','touchend','keydown'].forEach(t=>document.removeEventListener(t,unlockAudio,true));
   try{const Context=window.AudioContext||window.webkitAudioContext;if(Context){const context=new Context();context.resume().then(()=>context.close()).catch(()=>{})}}catch{}
+  // A direct Play already supplies the browser gesture. Do not replace its
+  // source with the unlock sound in the capture phase of that same click.
+  const action=event?.target?.closest('[data-online-play],#np-toggle,#sheet-toggle,[data-queue-play]');
+  const target=action?.matches('[data-online-play]')?videoById(action.dataset.onlinePlay):action?.matches('[data-queue-play]')?audioQueue[Number(action.dataset.queuePlay)]:audioQueue[audioIndex];
+  if(action&&target&&(target.provider==='local'||(target.provider==='piped'&&!cachedIds.has(target.id))))return;
   if(onlineAudio.getAttribute('src'))return;
   onlineAudio.src='/silence.wav';onlineAudio.play().then(()=>{audioUnlocked=true;if(onlineAudio.getAttribute('src')==='/silence.wav'){onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load()}}).catch(()=>{});
 }
 ['click','touchend','keydown'].forEach(t=>document.addEventListener(t,unlockAudio,true));
 function prefetchNext(){prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+3))}
-// Songs heard for a few seconds are stored whole in Cache Storage, so replaying a
-// recent one starts instantly from the device. cachedIds mirrors the cache so the
-// common (uncached) path stays synchronous and keeps the click's play gesture.
-const AUDIO_CACHE='ivox-audio-v1',AUDIO_KEEP=25,AUDIO_MAX_BYTES=25*1024*1024;
+// Reuse legacy device copies, but never compete with playback by downloading a
+// second full copy of every song. New prefetch is bounded on the server.
+const AUDIO_CACHE='ivox-audio-v1';
 const audioKey=id=>'/ivox-audio/'+encodeURIComponent(id);
-let cachedIds=new Set(),storingAudio=new Set(),blobUrl=null;
+let cachedIds=new Set(),blobUrl=null;
 const audioOrder=()=>{try{return JSON.parse(localStorage.getItem('ivox-audio-order')||'[]')}catch{return []}};
 const saveAudioOrder=order=>{try{localStorage.setItem('ivox-audio-order',JSON.stringify(order))}catch{}};
 if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.keys()).then(keys=>{cachedIds=new Set(keys.map(r=>decodeURIComponent(new URL(r.url).pathname.slice(12))))}).catch(()=>{});
@@ -38,31 +43,14 @@ async function localAudio(item){
     const response=await(await caches.open(AUDIO_CACHE)).match(audioKey(item.id));
     if(!response){cachedIds.delete(item.id);return null}
     saveAudioOrder([item.id,...audioOrder().filter(id=>id!==item.id)]);
-    if(blobUrl)URL.revokeObjectURL(blobUrl);
-    return blobUrl=URL.createObjectURL(await response.blob());
+    return URL.createObjectURL(await response.blob());
   }catch{return null}
-}
-async function keepAudio(item,url){
-  if(!item||item.provider==='local'||!url||url.startsWith('blob:')||storingAudio.has(item.id)||cachedIds.has(item.id)||!('caches' in window)||navigator.connection?.saveData)return;
-  storingAudio.add(item.id);
-  try{
-    const response=await fetch(url,{credentials:'same-origin'}),size=Number(response.headers.get('Content-Length')||0);
-    // Long mixes would crowd out dozens of songs; they keep streaming instead.
-    if(response.status!==200||!size||size>AUDIO_MAX_BYTES){response.body?.cancel();return}
-    const blob=await response.blob(),cache=await caches.open(AUDIO_CACHE);
-    await cache.put(audioKey(item.id),new Response(blob,{headers:{'Content-Type':response.headers.get('Content-Type')||blob.type||'audio/mpeg'}}));
-    cachedIds.add(item.id);
-    const order=[item.id,...audioOrder().filter(id=>id!==item.id&&cachedIds.has(id))];
-    for(const id of cachedIds)if(!order.includes(id))order.push(id);
-    for(const old of order.splice(AUDIO_KEEP)){cachedIds.delete(old);cache.delete(audioKey(old)).catch(()=>{})}
-    saveAudioOrder(order);
-  }catch{}finally{storingAudio.delete(item.id)}
 }
 function forgetAudio(item){cachedIds.delete(item.id);if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.delete(audioKey(item.id))).catch(()=>{})}
 // Resolving a YouTube audio URL takes ~1-2 s; doing it before the tap (top results,
 // hover, touch, the next songs in the queue) makes Play start almost instantly.
-const prefetched=new Set();
-function prefetchAudio(items){const ids=items.filter(v=>v&&v.provider==='piped'&&!prefetched.has(v.provider_id)&&!cachedIds.has(v.id)).slice(0,5).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.add(id));api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
+const prefetched=new Map();
+function prefetchAudio(items){const now=Date.now();for(const [id,until] of prefetched)if(until<=now)prefetched.delete(id);const ids=items.filter(v=>v&&v.provider==='piped'&&!prefetched.has(v.provider_id)&&!cachedIds.has(v.id)).slice(0,5).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.set(id,now+30000));api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
 function playerState(state){
   $('#online-player').dataset.state=state;const playing=state==='playing';
   $('#np-toggle').setAttribute('aria-label',playing?'Pausar':'Reproducir');
@@ -238,6 +226,7 @@ function drawOnlineLibrary(){
 function beginPlayback(){
   playController?.abort();playController=new AbortController();window.IVoxPlayerControls.cancelSeek();
   clearTimeout(advanceTimer);clearTimeout(skipTimer);skipTimer=null;clearTimeout(watchdog);
+  clearTimeout(stallTimer);stallTimer=null;playbackWanted=false;recoveryAttempts=0;lastPlaybackTime=0;recoveryInFlight=false;
   resumeAt=0;fixingDuration=false;return {version:++playVersion,signal:playController.signal};
 }
 function showTrack(item){
@@ -246,9 +235,10 @@ function showTrack(item){
   nowPlayingArt(item);progress(0,item.duration||0);nowPlaying.track(item);drawQueue();
 }
 // A song that never reaches 'playing' is treated as failed instead of spinning forever.
-function armWatchdog(version,ms=15000){clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||$('#online-player').dataset.state!=='loading')return;resolutionBusy=false;retryAudioLevel(version)},ms)}
+function armWatchdog(version,ms=15000){clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||!playbackWanted||$('#online-player').dataset.state!=='loading')return;resolutionBusy=false;retryAudioLevel(version)},ms)}
 async function startOnline(autostart=true,minimumLevel=1){
   const item=audioQueue[audioIndex];if(!item)return;const {version,signal}=beginPlayback();
+  playbackWanted=autostart;
   resolutionBusy=true;activeLevel=0;recordedReference=null;
   if(onlineAudio.getAttribute('src'))onlineAudio.pause();
   showTrack(item);$('#playback-status').textContent='Preparando audio…';playerState('loading');armWatchdog(version);
@@ -256,26 +246,26 @@ async function startOnline(autostart=true,minimumLevel=1){
     let result;
     if(item.provider==='local')result={url:'/api/tracks/'+item.provider_id+'/audio',level:0,source:'local'};
     // Level 0: a copy on this device (the element was already unlocked by an earlier gesture).
-    if(!result&&minimumLevel<=1&&cachedIds.has(item.id)){const local=await localAudio(item);if(version!==playVersion||!me)return;if(local)result={url:local,level:0,source:'device'}}
+    if(!result&&minimumLevel<=1&&cachedIds.has(item.id)){const local=await localAudio(item);if(version!==playVersion||!me){if(local)URL.revokeObjectURL(local);return}if(local)result={url:local,level:0,source:'device'}}
     // Level 1 plays in the same tick as the click (no await before play), so the gesture is kept;
     // the server starts relaying bytes as soon as yt-dlp returns the URL. Failures arrive via onerror.
     if(!result&&item.provider==='piped'&&minimumLevel<=1)result={url:'/api/audio/'+item.provider_id,level:1,source:'yt-dlp'};
     else if(!result){
-      onlineAudio.removeAttribute('src');onlineAudio.load();
       const format=onlineAudio.canPlayType('audio/mp4')?'mp4':'webm';
       result=await api('/api/online/play/'+encodeURIComponent(item.id).replace('%3A',':')+'?format='+format+(minimumLevel>=3?'&minimum_level=3':''),'GET',undefined,{signal});
       if(version!==playVersion||!me)return;
     }
     activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped'}[result.source]||'Audius';
-    if(blobUrl&&result.url!==blobUrl){URL.revokeObjectURL(blobUrl);blobUrl=null}
+    if(blobUrl&&result.url!==blobUrl)URL.revokeObjectURL(blobUrl);
+    blobUrl=result.source==='device'?result.url:null;
     onlineAudio.src=result.url;resolutionBusy=false;
     if(!autostart){clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
-    try{await onlineAudio.play()}catch(e){if(version!==playVersion||e.name==='AbortError')return;if(e.name==='NotAllowedError'){clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel(version)}
+    try{await onlineAudio.play()}catch(e){if(version!==playVersion||e.name==='AbortError')return;if(e.name==='NotAllowedError'){playbackWanted=false;clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel(version)}
   }catch(e){if(version!==playVersion||e.name==='AbortError'||!me)return;resolutionBusy=false;retryAudioLevel(version)}
 }
 // Fallback chain for one song: device copy → yt-dlp → Piped (only when an instance runs) → same song on Audius → next song.
 async function retryAudioLevel(version=playVersion){
-  if(version!==playVersion||resolutionBusy)return;const item=audioQueue[audioIndex];if(!item)return;
+  if(version!==playVersion||resolutionBusy||!playbackWanted)return;const item=audioQueue[audioIndex];if(!item)return;
   if(activeLevel===0&&item.provider!=='local'&&cachedIds.has(item.id)){forgetAudio(item);return startOnline(true,1)}
   if(item.provider==='piped'&&activeLevel<3&&onlineStatus?.piped)return startOnline(true,activeLevel<=1?2:3);
   resolutionBusy=true;
@@ -297,7 +287,7 @@ async function tryAudiusFallback(item,version,autostart=true){
 // Never hang on a broken song: say so, then move on. Three failures in a row stop the loop.
 async function playbackFailure(message){
   const current=audioQueue[audioIndex];if(!current)return;const version=playVersion;
-  failedReferences.add(current.id);clearTimeout(watchdog);failStreak++;
+  failedReferences.add(current.id);clearTimeout(watchdog);clearTimeout(stallTimer);stallTimer=null;playbackWanted=false;failStreak++;
   onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();playerState('error');
   $('#external-playback').innerHTML=externalLink(current)+(current.provider==='piped'?'<button id="playback-audius">Buscar alternativas en Audius</button>':'');
   if($('#playback-audius'))$('#playback-audius').onclick=()=>perform(async()=>{const q=(current.channel+' '+current.title).slice(0,120);history.pushState({},'','/');await discover();$('#online-query').value=q;$('#search-source').value='audius';await runSearch(q,false,'audius')});
@@ -339,30 +329,49 @@ function startRadio(v){audioQueue=[v];audioIndex=0;failedReferences.clear();radi
 function setAutoplay(on){autoplay=on;try{localStorage.setItem('ivox-autoplay',on?'1':'0')}catch{}if(on)ensureRadio();nowPlaying.state($('#online-player').dataset.state)}
 window.playLocal=(items,index)=>{audioQueue=items;audioIndex=index;failedReferences.clear();radioFor=null;startOnline()};
 
-onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav')return;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;prefetchNext();ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).catch(()=>{})}};
-onlineAudio.onerror=()=>{const src=onlineAudio.getAttribute('src');if(!src||src==='/silence.wav')return;resolutionBusy=false;retryAudioLevel(playVersion)};
+function clearStall(){clearTimeout(stallTimer);stallTimer=null;}
+function pausePlayback(){playbackWanted=false;recoveryInFlight=false;clearStall();clearTimeout(watchdog);onlineAudio.pause();if(audioQueue[audioIndex])playerState('paused');}
+function recoverCurrent(){
+  const src=onlineAudio.getAttribute('src');
+  if(recoveryInFlight)return playbackWanted;
+  if(!playbackWanted||!src||src==='/silence.wav'||recoveryAttempts>=2||!audioQueue[audioIndex])return false;
+  recoveryInFlight=true;recoveryAttempts++;clearStall();clearTimeout(watchdog);resolutionBusy=false;
+  resumeAt=onlineAudio.currentTime>0?onlineAudio.currentTime:lastPlaybackTime;
+  const version=playVersion;playerState('loading');$('#playback-status').textContent='Reconectando la misma canción…';
+  onlineAudio.load();
+  onlineAudio.play().catch(e=>{if(version!==playVersion||!playbackWanted||e.name==='AbortError')return;if(e.name==='NotAllowedError'){pausePlayback();playerState('paused');$('#playback-status').textContent='Pulsa ▶ para continuar.'}else retryAudioLevel(version)});
+  armWatchdog(version,8000);return true;
+}
+onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;prefetchNext();ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).catch(()=>{})}};
+onlineAudio.onerror=()=>{const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
+onlineAudio.addEventListener('playing',()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav')recoveryInFlight=false});
 onlineAudio.onended=async()=>{
   if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav')return;const version=playVersion;
+  clearStall();clearTimeout(watchdog);
   if(audioIndex<audioQueue.length-1){audioIndex++;startOnline();return}
   playerState('loading');const added=await ensureRadio(true);
   if(version!==playVersion)return;
-  if(added&&audioIndex<audioQueue.length-1){audioIndex++;startOnline()}else playerState('paused');
+  if(added&&audioIndex<audioQueue.length-1){audioIndex++;startOnline()}else{playbackWanted=false;playerState('paused')}
 };
-onlineAudio.onpause=()=>{if(!fixingDuration&&!resolutionBusy&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&!['loading','error'].includes($('#online-player').dataset.state))playerState('paused')};
-// Mid-song stalls (network drop): after 20 s waiting, reopen the same source at the same second.
-onlineAudio.onwaiting=()=>{if(onlineAudio.paused||fixingDuration)return;playerState('loading');const version=playVersion,at=onlineAudio.currentTime;clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||onlineAudio.readyState>=3||onlineAudio.paused)return;resumeAt=at;onlineAudio.src=onlineAudio.getAttribute('src');onlineAudio.play().catch(()=>{});armWatchdog(version)},20000)};
+onlineAudio.onpause=()=>{if(!fixingDuration&&!resolutionBusy&&!onlineAudio.error&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&!['loading','error'].includes($('#online-player').dataset.state)){playbackWanted=false;clearStall();clearTimeout(watchdog);playerState('paused')}};
+// Do not replace the startup watchdog or postpone reconnection on every waiting event.
+onlineAudio.onwaiting=()=>{
+  if(!playbackWanted||onlineAudio.paused||fixingDuration)return;
+  playerState('loading');if(lastPlaybackTime<=.25||stallTimer!==null)return;
+  const version=playVersion,at=onlineAudio.currentTime;
+  stallTimer=setTimeout(()=>{stallTimer=null;if(version!==playVersion||!playbackWanted||onlineAudio.paused)return;if(onlineAudio.currentTime>at+.1){onlineAudio.onwaiting();return}if(!recoverCurrent()){resolutionBusy=false;retryAudioLevel(version)}},3000);
+};
+onlineAudio.addEventListener('seeked',()=>{lastPlaybackTime=onlineAudio.currentTime});
+window.addEventListener('online',()=>{if(playbackWanted&&$('#online-player').dataset.state==='loading'&&lastPlaybackTime>.25)recoverCurrent()});
 onlineAudio.oncanplay=()=>{if(!onlineAudio.paused&&$('#online-player').dataset.state==='loading'&&onlineAudio.readyState>=3)playerState('playing')};
-// Safari often reports twice the real length for streamed AAC. Seeking far past the end
-// makes it read the real duration; the catalogue length also corrects the display and seeks.
+// Use catalogue metadata when Safari reports an unreliable streamed duration.
+// Never seek to the end during startup: that triggers extra Range requests and stalls playback.
 const unreliable=(d,known)=>!Number.isFinite(d)||d<=0||(known>0&&Math.abs(d-known)>Math.max(3,known*.1));
 function trackDuration(){const d=onlineAudio.duration,known=audioQueue[audioIndex]?.duration;return known>0&&unreliable(d,known)?known:d}
 window.IVoxPlayerControls.duration=trackDuration;
 onlineAudio.onloadedmetadata=()=>{
-  const version=playVersion;if(resumeAt){onlineAudio.currentTime=resumeAt;resumeAt=0}
-  if(!isSafari||fixingDuration||!unreliable(onlineAudio.duration,audioQueue[audioIndex]?.duration))return;
-  fixingDuration=true;const back=onlineAudio.currentTime;
-  const done=()=>{onlineAudio.removeEventListener('seeked',done);if(version!==playVersion||!fixingDuration)return;onlineAudio.currentTime=back;setTimeout(()=>{if(version===playVersion)fixingDuration=false;progress(onlineAudio.currentTime,trackDuration())},250)};
-  onlineAudio.addEventListener('seeked',done);onlineAudio.currentTime=99999;setTimeout(done,1500);
+  if(resumeAt){const at=resumeAt;resumeAt=0;try{onlineAudio.currentTime=at}catch{}}
+  progress(onlineAudio.currentTime,trackDuration());
 };
 let positionStamp=0;
 function progress(time,total){
@@ -374,21 +383,25 @@ function progress(time,total){
 }
 onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=>{
   if(onlineAudio.getAttribute('src')==='/silence.wav'||fixingDuration)return;progress(onlineAudio.currentTime,trackDuration());
-  if(activeLevel>0&&onlineAudio.currentTime>8)keepAudio(audioQueue[audioIndex],onlineAudio.currentSrc);
+  if(onlineAudio.readyState>=2)lastPlaybackTime=onlineAudio.currentTime;
 };
 ['#online-player .player-heading','#online-player .np-art'].forEach(s=>$(s).onclick=()=>nowPlaying.open());
 $('#np-expand').onclick=()=>nowPlaying.open();
 function toggleOnline(){
   if(!audioQueue[audioIndex])return;
-  if(!onlineAudio.getAttribute('src')||failedReferences.has(audioQueue[audioIndex].id)){failedReferences.delete(audioQueue[audioIndex].id);failStreak=0;startOnline();return}
-  if(onlineAudio.paused)onlineAudio.play().catch(e=>{if(e.name!=='AbortError')retryAudioLevel()});else onlineAudio.pause();
+  const source=onlineAudio.getAttribute('src');
+  if(!source||source==='/silence.wav'||failedReferences.has(audioQueue[audioIndex].id)){failedReferences.delete(audioQueue[audioIndex].id);failStreak=0;startOnline();return}
+  // paused becomes false as soon as play() is requested, before any audio is
+  // ready. A repeat Play while loading must not silently cancel that request.
+  if($('#online-player').dataset.state==='loading')return;
+  if(onlineAudio.paused){playbackWanted=true;onlineAudio.play().catch(e=>{if(e.name!=='AbortError')retryAudioLevel()})}else pausePlayback();
 }
 $('#np-toggle').onclick=toggleOnline;
 $('#np-download').onclick=()=>perform(()=>downloadOnline(audioQueue[audioIndex]));
 $('#np-like').onclick=e=>{const v=audioQueue[audioIndex];if(v)perform(()=>setFavorite(v,!savedVideo(v.id).favorite,e.currentTarget))};
 // Lock screen / headphones / Control Center controls on iPhone and Android.
 if('mediaSession' in navigator){
-  const actions={play:()=>onlineAudio.play().catch(()=>{}),pause:()=>onlineAudio.pause(),previoustrack:()=>$('#online-previous').click(),nexttrack:()=>nextTrack(),seekto:d=>{if(d.seekTime!=null)window.IVoxPlayerControls.seek(d.seekTime)}};
+  const actions={play:()=>{playbackWanted=true;onlineAudio.play().catch(()=>{})},pause:pausePlayback,previoustrack:()=>$('#online-previous').click(),nexttrack:()=>nextTrack(),seekto:d=>{if(d.seekTime!=null)window.IVoxPlayerControls.seek(d.seekTime)}};
   for(const [name,handler] of Object.entries(actions)){try{navigator.mediaSession.setActionHandler(name,(d)=>{if(!$('#online-player').hidden)handler(d)})}catch{}}
 }
 document.addEventListener('keydown',e=>{
@@ -398,10 +411,10 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='l'||e.key==='L')$('#np-like').click();
 });
 window.stopOnline=function(){beginPlayback();onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();audioQueue=[];audioIndex=-1;recordedReference=null;radioFor=null;failStreak=0;if(blobUrl){URL.revokeObjectURL(blobUrl);blobUrl=null}$('#online-player').hidden=true;document.body.classList.remove('has-online-player');nowPlaying.close(true);playerState('idle');if('mediaSession' in navigator)navigator.mediaSession.metadata=null};
-window.resetOnlineSession=function(){stopOnline();cancelOnlineSearch();searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};onlineData={saves:[],playlists:[],items:{},recent:[]}};
-window.pauseOnline=()=>onlineAudio.pause();
+window.resetOnlineSession=function(){stopOnline();cancelOnlineSearch();prefetched.clear();searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};onlineData={saves:[],playlists:[],items:{},recent:[]}};
+window.pauseOnline=pausePlayback;
 // "Previous" restarts the song after the first few seconds, like every music app.
 $('#close-online').onclick=()=>stopOnline();$('#online-previous').onclick=()=>{if(onlineAudio.currentTime>4&&!skipTimer){window.IVoxPlayerControls.seek(0);return}skipBy(-1)};$('#online-next').onclick=()=>nextTrack();
 $('#queue-toggle').onclick=()=>nowPlaying.open('queue');
 
-function privacy(){shell(`<h1>Privacidad y condiciones</h1><section class="panel"><h2>Tu música online, tus listas privadas</h2><p>IVOX guarda cuentas, contraseñas mediante hash, sesiones y referencias de favoritos, playlists, escuchar después, historial y búsquedas recientes en su servidor. Se comparten únicamente entre tus sesiones.</p><p>Las consultas se envían a YouTube Music, a la instancia privada de Piped o a Audius. El audio se transmite sin guardarlo en disco, mediante un enlace temporal protegido por tu sesión. Para que repetir una canción sea instantáneo, este dispositivo guarda una copia de las 25 últimas que escuchaste (hasta 25 MB cada una) en el almacenamiento del navegador; no se envía a ningún sitio y se borra al limpiar los datos del sitio. Los proveedores reciben las peticiones y la dirección IP del servidor; las imágenes externas pueden recibir la IP de tu navegador. Las letras proceden de los socios de YouTube Music indicados en cada una.</p><p>IVOX no necesita tus credenciales de YouTube o Audius. No modifica tus cuentas de esos servicios. Piped no es un servicio oficial de YouTube; puede dejar de funcionar o ser bloqueado.</p><p>Puedes borrar referencias, playlists, recientes e historial. Este botón elimina tus referencias online de IVOX; conserva tu cuenta, playlists vacías y archivos locales.</p><button id="clear-online-data" class="danger">Borrar mis datos de biblioteca online</button></section>`);$('#clear-online-data').onclick=()=>confirmAction('¿Borrar tus datos online de IVOX?','Se eliminarán favoritos, escuchar después, historial, búsquedas y referencias de todas tus playlists. No se puede deshacer.',async()=>{await api('/api/online/library','DELETE');stopOnline();notify('Datos online eliminados de IVOX.')})}
+function privacy(){shell(`<h1>Privacidad y condiciones</h1><section class="panel"><h2>Tu música online, tus listas privadas</h2><p>IVOX guarda cuentas, contraseñas mediante hash, sesiones y referencias de favoritos, playlists, escuchar después, historial y búsquedas recientes en su servidor. Se comparten únicamente entre tus sesiones.</p><p>Las consultas se envían a YouTube Music, a la instancia privada de Piped o a Audius. El audio se transmite sin guardarlo en disco, mediante un enlace temporal protegido por tu sesión. Las copias guardadas por versiones anteriores pueden seguir en este navegador y se eliminan al limpiar los datos del sitio. La reproducción actual no descarga una segunda copia completa en segundo plano. Los proveedores reciben las peticiones y la dirección IP del servidor; las imágenes externas pueden recibir la IP de tu navegador. Las letras proceden de los socios de YouTube Music indicados en cada una.</p><p>IVOX no necesita tus credenciales de YouTube o Audius. No modifica tus cuentas de esos servicios. Piped no es un servicio oficial de YouTube; puede dejar de funcionar o ser bloqueado.</p><p>Puedes borrar referencias, playlists, recientes e historial. Este botón elimina tus referencias online de IVOX; conserva tu cuenta, playlists vacías y archivos locales.</p><button id="clear-online-data" class="danger">Borrar mis datos de biblioteca online</button></section>`);$('#clear-online-data').onclick=()=>confirmAction('¿Borrar tus datos online de IVOX?','Se eliminarán favoritos, escuchar después, historial, búsquedas y referencias de todas tus playlists. No se puede deshacer.',async()=>{await api('/api/online/library','DELETE');stopOnline();notify('Datos online eliminados de IVOX.')})}

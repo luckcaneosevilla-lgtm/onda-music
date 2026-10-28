@@ -4,6 +4,7 @@ No search/prefetch for cold IDs. Public upstreams only. A playing event confirms
 decoder start, not a microphone measurement or production network SLA.
 """
 import json
+import os
 from pathlib import Path
 import statistics
 import sys
@@ -20,6 +21,7 @@ server=onda.OndaHTTPServer(('127.0.0.1',0),onda.Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 base=f'http://127.0.0.1:{server.server_port}'
 report={'metric':'click to HTMLMediaElement playing on local Chromium','cold':[],'prefetched':[]}
+hold_seconds=float(os.environ.get('IVOX_BENCH_HOLD_SECONDS','0'))
 try:
  with sync_playwright() as p:
   browser=p.chromium.launch()
@@ -35,9 +37,7 @@ try:
     context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,storage_state=auth)
     page=context.new_page();page.goto(base)
     page.wait_for_function("() => typeof startOnline === 'function' && me !== null")
-    # Unlock through a real gesture before timing music, like using the search UI.
-    page.locator('h1').first.click()
-    page.wait_for_function("() => !onlineAudio.getAttribute('src')")
+    # The measured Play is the first gesture: never hide a first-tap failure.
     # Keep network work under test limited to this track; no local audio cache is reused.
     page.evaluate('() => {ensureRadio=()=>{};prefetchNext=()=>{}}')
     page.evaluate("""id => {
@@ -52,7 +52,11 @@ try:
      page.locator('#np-toggle').click()
      page.wait_for_function('() => window.playingMs !== null && onlineAudio.currentTime>0',timeout=30000)
      milliseconds=page.evaluate('window.playingMs')
-     report[mode].append({'id':video_id,'playing_ms':round(milliseconds,2)})
+     row={'id':video_id,'playing_ms':round(milliseconds,2)}
+     if hold_seconds:
+      page.wait_for_function('seconds => onlineAudio.currentTime>=seconds && !onlineAudio.paused',arg=hold_seconds,timeout=(hold_seconds+20)*1000)
+      row.update(played_until_s=round(page.evaluate('onlineAudio.currentTime'),2),recoveries=page.evaluate('recoveryAttempts'))
+     report[mode].append(row)
     except Exception as error:report[mode].append({'id':video_id,'error':type(error).__name__,'detail':str(error)[:350]})
     page.evaluate('onlineAudio.pause()')
     context.close()

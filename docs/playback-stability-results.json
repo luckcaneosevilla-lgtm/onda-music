@@ -1,0 +1,125 @@
+{
+  "date": "2026-10-28",
+  "controlled_cases": [
+    {
+      "case": "first-tap",
+      "playing_ms": 316.3,
+      "status": "passed"
+    },
+    {
+      "case": "repeat-loading",
+      "playing_ms": 315,
+      "status": "passed"
+    },
+    {
+      "case": "sheet-first-tap",
+      "playing_ms": 311.3,
+      "status": "passed"
+    },
+    {
+      "case": "sheet-repeat-loading",
+      "playing_ms": 309.1,
+      "status": "passed"
+    },
+    {
+      "case": "unlock-in-flight",
+      "playing_ms": 313.5,
+      "status": "passed"
+    },
+    {
+      "case": "async-source",
+      "playing_ms": 462.2,
+      "status": "passed"
+    },
+    {
+      "case": "legacy-cache",
+      "playing_ms": 26.4,
+      "status": "passed"
+    },
+    {
+      "case": "safari-duration",
+      "playing_ms": 311.1,
+      "status": "passed"
+    },
+    {
+      "case": "recover-network",
+      "playing_ms": 315.6,
+      "status": "passed"
+    },
+    {
+      "case": "stall-reconnect",
+      "playing_ms": 311.1,
+      "status": "passed"
+    },
+    {
+      "case": "pause-stall",
+      "playing_ms": 315.3,
+      "status": "passed"
+    },
+    {
+      "case": "switch-stall",
+      "playing_ms": 336.5,
+      "status": "passed"
+    },
+    {
+      "case": "no-copy-download",
+      "playing_ms": 359.8,
+      "status": "passed"
+    }
+  ],
+  "real_35s_playback": {
+    "metric": "click to HTMLMediaElement playing on local Chromium",
+    "cold": [
+      {
+        "id": "kJQP7kiw5Fk",
+        "playing_ms": 2245.2,
+        "played_until_s": 35.01,
+        "recoveries": 0
+      }
+    ],
+    "prefetched": [
+      {
+        "id": "kJQP7kiw5Fk",
+        "playing_ms": 33.9,
+        "played_until_s": 35.01,
+        "recoveries": 0
+      }
+    ],
+    "cold_summary": {
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 2245.2,
+      "under_1000ms": 0
+    },
+    "prefetched_summary": {
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 33.9,
+      "under_1000ms": 1
+    }
+  },
+  "public_scripts_before_fix": [
+    {
+      "path": "online.js",
+      "status": 200,
+      "matches_local": false,
+      "has_old_safari_seek": true,
+      "has_loading_guard": false
+    },
+    {
+      "path": "service-worker.js",
+      "status": 200,
+      "matches_local": false,
+      "has_old_safari_seek": false,
+      "has_loading_guard": false
+    },
+    {
+      "path": "player-controls.js",
+      "status": 200,
+      "matches_local": false,
+      "has_old_safari_seek": false,
+      "has_loading_guard": false
+    }
+  ],
+  "limits": "Local Chromium; Safari UA is not Safari hardware; production playback not authenticated."
+}

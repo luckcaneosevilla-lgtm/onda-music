@@ -129,6 +129,20 @@ class OnlineTests(unittest.TestCase):
             self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['unknown0000']})[0],202)
             prefetch.assert_called_once_with([])
 
+    def test_truncated_audio_invalidates_url_before_browser_reconnects(self):
+        from io import BytesIO
+        from unittest.mock import Mock
+        class Truncated(BytesIO):
+            status=206
+            def getheader(self,key,default=None):return {'Content-Length':'10','Content-Range':'bytes 0-9/10'}.get(key,default)
+        with patch.object(onda.resolver,'open',return_value=(Mock(),Truncated(b'abcd'),'audio/mp4')),patch.object(onda.resolver,'invalidate') as invalidate:
+            conn=http.client.HTTPConnection('127.0.0.1',self.port)
+            conn.request('GET','/api/audio/testVideo01',headers={'Cookie':self.client.cookie})
+            response=conn.getresponse()
+            with self.assertRaises(http.client.IncompleteRead):response.read()
+            conn.close()
+            invalidate.assert_called_once_with('testVideo01')
+
     def test_local_admin_recovery_expiry_single_use_and_session_revocation(self):
         link=onda.create_admin_recovery('one@test.com',self.port);token=link.split('#')[1]
         with onda.db() as c:

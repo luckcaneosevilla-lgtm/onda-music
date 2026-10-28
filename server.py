@@ -509,7 +509,10 @@ class Handler(BaseHTTPRequestHandler):
                 reader=getattr(response,'read1',response.read)
                 phase='upstream_read'
                 chunk=reader(16384 if sent==0 else 65536)
-                if not chunk:break
+                if not chunk:
+                    expected=response.getheader('Content-Length')
+                    if expected and expected.isdigit() and sent<int(expected):raise http.client.IncompleteRead(b'')
+                    break
                 phase='client_write'
                 self.wfile.write(chunk)
                 if sent==0:
@@ -518,6 +521,10 @@ class Handler(BaseHTTPRequestHandler):
                 sent+=len(chunk)
         except (OSError,http.client.HTTPException):
             self.close_connection=True;outcome=phase+'_error'
+            # A failed prefix continuation must not be served again on the
+            # next recovery request. Client skips/disconnects keep valid cache.
+            if phase=='upstream_read' and level==1 and self.audio_video_id:
+                resolver.invalidate(self.audio_video_id)
         finally:
             connection.close()
             metric('audio_complete',request_id=self.audio_request_id,video_id=getattr(self,'audio_video_id',None),first_byte_ms=first_byte_ms,total_ms=round((time.perf_counter()-self.started)*1000,2),bytes=sent,outcome=outcome,**timings)
