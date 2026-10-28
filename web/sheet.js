@@ -268,6 +268,6 @@ $('#sheet-viz').hidden=!visualizer.supported;
 // audio.volume and only obeys the hardware buttons, so it is not offered there.
 $('#sheet-volume-wrap').hidden=isIOS;
 $('#sheet-volume').oninput=e=>{onlineAudio.volume=e.target.value/100;if(onlineAudio.volume>0)onlineAudio.muted=false};
-onlineAudio.addEventListener('volumechange',()=>{$('#sheet-volume').value=onlineAudio.muted?0:Math.round(onlineAudio.volume*100)});
+onlineAudio.addEventListener('volumechange',()=>{if(window.IVoxPlayerControls.fading)return;$('#sheet-volume').value=onlineAudio.muted?0:Math.round(onlineAudio.volume*100)});
 $('#sheet-viz').onclick=()=>visualizer.toggle();
 setTint(null);

@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="IVOX">
   <link rel="apple-touch-icon" href="/icon-192x192.png">
   <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/online.css"><link rel="stylesheet" href="/player.css"><link rel="stylesheet" href="/sheet.css">
-  <script src="/app.js" defer></script><script src="/player-controls.js" defer></script><script src="/online.js" defer></script><script src="/sheet.js" defer></script>
+  <script src="/app.js" defer></script><script src="/player-controls.js" defer></script><script src="/online.js" defer></script><script src="/sheet.js" defer></script><script src="/home.js" defer></script><script src="/offline.js" defer></script><script src="/crossfade.js" defer></script>
 </head>
 <body>
   <div id="app"></div><div id="notice" role="status" aria-live="polite"></div>
@@ -62,6 +62,8 @@
         <div class="sheet-toggles">
           <button id="sheet-autoplay" class="chip" aria-pressed="true"><span aria-hidden="true">∞</span> Autoplay</button>
           <button id="sheet-viz" class="chip" aria-pressed="false"><span aria-hidden="true">◎</span> Visualizador</button>
+          <button id="sheet-crossfade" class="chip" aria-pressed="true"><span aria-hidden="true">⤨</span> <span class="chip-label">Transición 6 s</span></button>
+          <button id="sheet-offline" class="chip" aria-pressed="false"><span aria-hidden="true">↓</span> <span class="chip-label">Sin conexión</span></button>
         </div>
         <label class="sheet-volume" id="sheet-volume-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3zm12-3v2a5 5 0 0 1 0 8v2a7 7 0 0 0 0-12z"/></svg><span class="sr-only">Volumen</span><input id="sheet-volume" type="range" min="0" max="100" step="1" value="100"></label>
       </div>

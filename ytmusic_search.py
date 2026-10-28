@@ -82,6 +82,10 @@ class MusicSearch:
     def get_artist(self,browse_id):return self.call('artist',browse_id=browse_id)
     def radio(self,video_id,limit=25):return self.call('radio',video_id=video_id,limit=limit)
     def lyrics(self,video_id):return self.call('lyrics',video_id=video_id)
+    def charts(self,country):
+        result=self.call('charts',country=country)
+        if not isinstance(result,dict):raise ProviderError(502,'ytmusic_unavailable','YouTube Music devolvió una respuesta inesperada.')
+        return result
     def suggest(self,query):
         result=self.call('suggest',timeout=4,query=query)
         if not isinstance(result,dict):raise ProviderError(502,'ytmusic_unavailable','YouTube Music devolvió una respuesta inesperada.')
@@ -194,6 +198,13 @@ def worker():
                 elif str((nav.get('browseEndpoint') or {}).get('browseId','')).startswith('UC'):
                     artists.append({'browseId':nav['browseEndpoint']['browseId'],'artist':runs[0].get('text',''),'thumbnails':thumbnails})
         return {'queries':queries[:8],'artists':artists[:4],'songs':songs[:5]}
+    def charts(country):
+        # The country's daily chart is a playlist; its tracks carry artists, art and length.
+        data=client().get_charts(country=country)
+        lists=[v for v in data.get('videos') or [] if isinstance(v,dict) and v.get('playlistId')]
+        daily=next((v for v in lists if 'daily' in str(v.get('title','')).lower()),lists[0] if lists else None)
+        tracks=(client().get_playlist(daily['playlistId'],limit=30).get('tracks') or [])[:30] if daily else []
+        return {'tracks':tracks,'artists':[a for a in data.get('artists') or [] if isinstance(a,dict)][:15]}
     def handle(request):
         op,args=request.get('op'),request.get('args') or {}
         try:
@@ -205,6 +216,7 @@ def worker():
             elif op=='artist':result=MusicSearch.artist_profile(client().get_artist(args['browse_id']),args['browse_id'])
             elif op=='radio':result=radio(args['video_id'],int(args.get('limit',25)))
             elif op=='lyrics':result=lyrics(args['video_id'])
+            elif op=='charts':result=charts(str(args['country'])[:2])
             elif op=='suggest':result=suggest(str(args['query'])[:80])
             else:raise ValueError()
             answer={'id':request.get('id'),'ok':True,'result':result}

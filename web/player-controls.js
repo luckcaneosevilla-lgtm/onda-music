@@ -92,6 +92,7 @@
   function closeVolume(){panel.hidden=true;toggle.setAttribute('aria-expanded','false');}
   toggle.onclick=() => {panel.hidden=!panel.hidden;toggle.setAttribute('aria-expanded',String(!panel.hidden));};
   function syncVolume() {
+    if(window.IVoxPlayerControls?.fading) return;
     volume.value=Math.round(audio.volume*100);
     volume.setAttribute('aria-valuetext',`${volume.value}%`);
     const silent=audio.muted || audio.volume===0;

@@ -241,6 +241,20 @@ class MusicProvider:
         tracks=self.extra(user_id,('radio',raw),600,lambda:self.music.radio(raw))
         items=[self.music.normalize(t) for t in tracks];items=list({i['id']:i for i in items if i and i['id']!=reference}.values())
         self.store(c,items);return items
+    def charts(self,c):
+        # Shared by every listener: one fetch per country every three hours.
+        country=os.environ.get('IVOX_MUSIC_COUNTRY','CL').upper()[:2]
+        with self.lock:
+            hit=self.extras.get(('charts',country))
+            if hit and hit[0]>time.time():return hit[1]
+        raw=self.music.charts(country)
+        songs=list({s['id']:s for s in (self.music.normalize(t) for t in raw.get('tracks') or []) if s}.values())
+        artists=[a for a in (self.music.artist(e) for e in raw.get('artists') or []) if a and re.fullmatch(r'UC[A-Za-z0-9_-]{22}',a['id'])]
+        self.store(c,songs)
+        names={'CL':'Chile','AR':'Argentina','MX':'México','CO':'Colombia','PE':'Perú','ES':'España','US':'Estados Unidos'}
+        result={'country':names.get(country,country),'songs':songs,'artists':artists}
+        with self.lock:self.extras[('charts',country)]=(time.time()+3*3600,result)
+        return result
     def suggest(self,c,user_id,q,deep=False):
         # Typeahead fires on keystrokes: its own cache and a looser per-user budget,
         # so typing never eats the quota of radio and lyrics.

@@ -220,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_response(200);self.headers_common('application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
                 if path=='/youtube-setup':
                     self.send(410,{'error':'La reproducción actual usa Piped y Audius. Consulta README_SECCION_REPRODUCCION.md.'});return
-                static_types={'player-controls.js':'text/javascript','app.js':'text/javascript','online.js':'text/javascript','sheet.js':'text/javascript','sheet.css':'text/css','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
+                static_types={'player-controls.js':'text/javascript','app.js':'text/javascript','online.js':'text/javascript','sheet.js':'text/javascript','home.js':'text/javascript','offline.js':'text/javascript','crossfade.js':'text/javascript','sheet.css':'text/css','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 self.send_response(200); self.headers_common(static_types[filename])
@@ -394,6 +394,8 @@ class Handler(BaseHTTPRequestHandler):
             result=provider.search(c,uid,q,page,params.get('source',['auto'])[0],params.get('filter',['songs'])[0])
             resolver.prefetch_many([v['provider_id'] for v in result.get('items',[])[:5] if v.get('provider')=='piped'])
             c.commit();self.send(200,result);return
+        if path=='/api/online/charts' and method=='GET':
+            result=provider.charts(c);c.commit();self.send(200,result);return
         if path=='/api/online/suggest' and method=='GET':
             q=' '.join(parse_qs(urlparse(self.path).query).get('q',[''])[0].split());require(1<=len(q)<=80,'Búsqueda inválida.')
             result=provider.suggest(c,uid,q,parse_qs(urlparse(self.path).query).get('deep')==['1']);c.commit();self.send(200,result);return

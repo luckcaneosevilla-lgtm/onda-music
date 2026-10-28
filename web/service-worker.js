@@ -1,6 +1,6 @@
-const CACHE = 'ivox-app-shell-v11';
+const CACHE = 'ivox-app-shell-v12';
 const SHELL = ['/', '/index.html', '/style.css', '/online.css', '/player.css', '/sheet.css',
-  '/app.js', '/player-controls.js', '/online.js', '/sheet.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav',
+  '/app.js', '/player-controls.js', '/online.js', '/sheet.js', '/home.js', '/offline.js', '/crossfade.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav',
   '/fonts/cinzel.woff2', '/fonts/inter.woff2'];
 const ASSETS = new Set(SHELL);
 const PAGES = new Set(['/', '/index.html', '/library', '/plan', '/files', '/privacy']);

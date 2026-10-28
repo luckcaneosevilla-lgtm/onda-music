@@ -12,7 +12,7 @@ let playbackWanted=false,stallTimer=null,recoveryAttempts=0,lastPlaybackTime=0,r
 let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),radioPromise=null,queueFinished=false,nearEnd=false,loadingSince=0;
 const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`;
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
-const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id);
+const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id)||window.homeLookup?.(id)||window.offlineLookup?.(id);
 const isSafari=/^((?!chrome|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
 // YouTube Music thumbnails come at 60-120 px; the same URL serves any size.
 const bigArt=url=>String(url||'').replace(/=w\d+-h\d+/,'=w600-h600');
@@ -37,7 +37,7 @@ const audioKey=id=>'/ivox-audio/'+encodeURIComponent(id);
 let cachedIds=new Set(),blobUrl=null;
 const audioOrder=()=>{try{return JSON.parse(localStorage.getItem('ivox-audio-order')||'[]')}catch{return []}};
 const saveAudioOrder=order=>{try{localStorage.setItem('ivox-audio-order',JSON.stringify(order))}catch{}};
-if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.keys()).then(keys=>{cachedIds=new Set(keys.map(r=>decodeURIComponent(new URL(r.url).pathname.slice(12))))}).catch(()=>{});
+const cachedReady=('caches' in window?caches.open(AUDIO_CACHE).then(c=>c.keys()).then(keys=>{cachedIds=new Set(keys.map(r=>decodeURIComponent(new URL(r.url).pathname.slice(12))))}):Promise.resolve()).catch(()=>{});
 async function localAudio(item){
   try{
     const response=await(await caches.open(AUDIO_CACHE)).match(audioKey(item.id));
@@ -46,7 +46,7 @@ async function localAudio(item){
     return URL.createObjectURL(await response.blob());
   }catch{return null}
 }
-function forgetAudio(item){cachedIds.delete(item.id);if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.delete(audioKey(item.id))).catch(()=>{})}
+function forgetAudio(item){cachedIds.delete(item.id);window.offlineForget?.(item.id);if('caches' in window)caches.open(AUDIO_CACHE).then(c=>c.delete(audioKey(item.id))).catch(()=>{})}
 // Resolving a YouTube audio URL takes ~1-2 s; doing it before the tap (top results,
 // hover, touch, the next songs in the queue) makes Play start almost instantly.
 const prefetched=new Map(),prefetchedReset=v=>{if(v)prefetched.delete(v.provider_id)};
@@ -130,7 +130,7 @@ function localMatches(q){
 }
 function onSuggestInput(){
   const q=$('#online-query').value.trim();clearTimeout(suggestTimer);clearTimeout(prefetchTimer);suggestController?.abort();
-  if(!q){closeSuggest();return}
+  if(!q){closeSuggest();if(searchView.query){cancelOnlineSearch();searchView={query:'',source:searchView.source,filter:searchView.filter,resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};drawSearch()}return}
   drawSuggest(null,q);suggestTimer=setTimeout(()=>fetchSuggest(q,false),120);
 }
 async function fetchSuggest(q,deep){
@@ -218,7 +218,7 @@ function drawSearch(){
   const el=$('#search-results');if(!el||location.pathname!=='/')return;
   if(searchView.loading&&!searchView.items.length){el.innerHTML=(searchView.artist===undefined?'<div class="artist-hero skeleton" aria-hidden="true"></div>':'')+'<div class="empty" role="status">Buscando música online…</div>';return}
   if(searchView.error){el.innerHTML=`<div class="empty error-state"><h2>No se pudo completar la búsqueda</h2><p>${esc(searchView.error.message)}</p><div class="tools"><button id="retry-search">Volver a intentar</button><button id="try-audius">Buscar en Audius</button></div></div>`;$('#retry-search').onclick=()=>runSearch(searchView.query,false,searchView.source);$('#try-audius').onclick=()=>{$('#search-source').value='audius';runSearch(searchView.query,false,'audius')};return}
-  if(!searchView.query){el.innerHTML='<div class="discovery-empty">'+LOGO+'<h2>Una búsqueda. Otra forma de sentir.</h2><p class="muted">Escribe ese nombre que no te quitas de la cabeza.</p></div>';return}
+  if(!searchView.query){drawHome(el);return}
   const artists=searchView.artists||[],kind=searchView.filter||'songs',labels={ytmusic:'YouTube Music',youtube:'YouTube Data API',piped:'Piped',audius:'Audius'};
   const artistCards=artists.length?artists.map(a=>`<article class="video-row artist-row"><div class="video-art round">${a.thumbnail?`<img src="${esc(a.thumbnail)}" alt="" loading="lazy">`:'♫'}</div><div class="video-info"><h3>${esc(a.name)}</h3><p>${esc(a.source)}</p></div>${/^UC[\w-]{22}$/.test(a.id)?`<a class="button-link" href="/artist/${esc(a.id)}" data-artist-open data-artist="${esc(a.name)}">Ver artista</a>`:`<button data-artist="${esc(a.name)}">Ver canciones</button>`}</article>`).join(''):'<div class="empty"><h2>No se encontraron artistas</h2><p>Prueba otro nombre o busca canciones.</p></div>';
   // The profile of the artist the query names comes first, then the songs.
@@ -261,7 +261,7 @@ async function artistPage(){
 }
 function videoCards(items,playlist=null){
   if(!items.length)return '<div class="empty"><h2>No hay canciones aquí todavía</h2><p>Prueba otra búsqueda o fuente y guarda lo que te guste.</p><a href="/" class="text-link" data-discover>Descubrir música</a></div>';
-  return items.map(v=>{const s=savedVideo(v.id);return `<article class="video-row" data-video="${esc(v.id)}"><div class="video-art">${v.thumbnail?`<img src="${esc(v.thumbnail)}" alt="" loading="lazy" width="120" height="90">`:'<span aria-hidden="true">♫</span>'}<span class="duration">${duration(v.duration)}</span></div><div class="video-info"><h3>${esc(v.title)}</h3><p>${esc(v.channel)} <span class="source-badge">${esc(v.source||v.provider)}</span></p></div><div class="video-actions"><button class="primary" data-online-play="${v.id}" aria-label="Reproducir ${esc(v.title)}">▶ Play</button><button data-online-fav="${v.id}" aria-label="${s.favorite?'Quitar de':'Añadir a'} favoritos de IVOX" aria-pressed="${!!s.favorite}">${s.favorite?'♥':'♡'}</button><button data-online-menu="${v.id}" aria-label="Opciones de ${esc(v.title)}">•••</button>${playlist?`<button data-online-remove="${v.id}" aria-label="Quitar de playlist">×</button>`:''}</div></article>`}).join('');
+  return items.map(v=>{const s=savedVideo(v.id);return `<article class="video-row" data-video="${esc(v.id)}"><div class="video-art">${v.thumbnail?`<img src="${esc(v.thumbnail)}" alt="" loading="lazy" width="120" height="90">`:'<span aria-hidden="true">♫</span>'}<span class="duration">${duration(v.duration)}</span></div><div class="video-info"><h3>${esc(v.title)}</h3><p>${esc(v.channel)} <span class="source-badge">${esc(v.source||v.provider)}</span>${window.offlineHas?.(v.id)?'<span class="offline-badge" title="Disponible sin conexión" aria-label="Disponible sin conexión">↓</span>':''}</p></div><div class="video-actions"><button class="primary" data-online-play="${v.id}" aria-label="Reproducir ${esc(v.title)}">▶ Play</button><button data-online-fav="${v.id}" aria-label="${s.favorite?'Quitar de':'Añadir a'} favoritos de IVOX" aria-pressed="${!!s.favorite}">${s.favorite?'♥':'♡'}</button><button data-online-menu="${v.id}" aria-label="Opciones de ${esc(v.title)}">•••</button>${playlist?`<button data-online-remove="${v.id}" aria-label="${playlist==='downloads'?'Quitar de descargas':'Quitar de playlist'}">×</button>`:''}</div></article>`}).join('');
 }
 function bindVideoCards(root,items,playlist=null){
   if(!root)return;
@@ -273,7 +273,7 @@ function bindVideoCards(root,items,playlist=null){
   root.querySelectorAll('.video-row[data-video]').forEach(row=>visiblePrefetch.observe(row));
   root.querySelectorAll('[data-online-fav]').forEach(b=>b.onclick=()=>perform(()=>setFavorite(videoById(b.dataset.onlineFav),!savedVideo(b.dataset.onlineFav).favorite,b)));
   root.querySelectorAll('[data-online-menu]').forEach(b=>b.onclick=()=>onlineOptions(videoById(b.dataset.onlineMenu)));
-  root.querySelectorAll('[data-online-remove]').forEach(b=>b.onclick=()=>perform(async()=>{await api('/api/online/playlists/'+playlist+'/items','DELETE',{video_id:b.dataset.onlineRemove});await onlineLibrary(true)}));
+  root.querySelectorAll('[data-online-remove]').forEach(b=>b.onclick=()=>perform(async()=>{if(playlist==='downloads'){await offline.remove(b.dataset.onlineRemove);drawOnlineLibrary();return}await api('/api/online/playlists/'+playlist+'/items','DELETE',{video_id:b.dataset.onlineRemove});await onlineLibrary(true)}));
 }
 // Favorites update in place everywhere (rows, mini player, Now Playing) without re-rendering the page.
 async function setFavorite(v,value,origin){
@@ -288,7 +288,8 @@ async function setFavorite(v,value,origin){
 }
 function externalLink(v){if(v.provider==='piped'&&onlineStatus?.allow_youtube_external)return `<a class="text-link" href="https://www.youtube.com/watch?v=${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en YouTube (fuera de IVOX)</a>`;if(v.provider==='audius')return `<a class="text-link" href="https://audius.co/tracks/${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en Audius</a>`;return ''}
 function onlineOptions(v){
-  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="play-next">Reproducir a continuación</button><button id="enqueue">Añadir a la cola</button>${v.provider==='piped'?'<button id="start-radio">◉ Iniciar radio de esta canción</button>':''}<button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button><button id="download-online">Descargar</button>${externalLink(v)}</div>`);
+  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="play-next">Reproducir a continuación</button><button id="enqueue">Añadir a la cola</button>${v.provider==='piped'?'<button id="start-radio">◉ Iniciar radio de esta canción</button>':''}<button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button>${v.provider!=='local'?`<button id="offline-toggle">${offline.has(v.id)?'✓ Disponible sin conexión · quitar':'↓ Guardar sin conexión'}${offline.premium()?'':' <span class="pill">Premium</span>'}</button>`:''}<button id="download-online">Descargar archivo</button>${externalLink(v)}</div>`);
+  if($('#offline-toggle'))$('#offline-toggle').onclick=()=>{dialog.close();offline.has(v.id)?perform(()=>offline.remove(v.id)):offline.add([v])};
   $('#download-online').onclick=()=>{dialog.close();perform(()=>downloadOnline(v))};
   $('#play-next').onclick=()=>{dialog.close();notify(enqueue([v],true)?'Reproduciendo «'+v.title+'».':'Sonará a continuación.')};
   $('#enqueue').onclick=()=>{dialog.close();notify(enqueue([v])?'Reproduciendo «'+v.title+'».':'Añadido a la cola.')};
@@ -302,16 +303,17 @@ function pickOnlinePlaylist(v){
 }
 async function onlineLibrary(fresh=false){
   if(fresh)await onlineState();else await ensureOnline(()=>{if(location.pathname==='/library')drawOnlineLibrary()});if(location.pathname!=='/library'||!me)return;const section=new URLSearchParams(location.search).get('section');if(section)onlineSection=section;
-  shell(`<div class="topline"><div><p class="muted">Tu espacio en IVOX</p><h1>Mi biblioteca</h1><p>Guarda lo que te mueve. Escúchalo desde cualquier dispositivo.</p></div><button id="new-online-playlist" class="primary">Nueva playlist</button></div><div class="library-tabs" role="group" aria-label="Colecciones"><button data-section="favorites">♡ Favoritos</button><button data-section="later">◷ Escuchar después</button><button data-section="history">Historial</button><button data-section="playlists">Playlists</button></div><div id="online-library-content"></div><p class="provider-note">Referencias privadas de IVOX. No descargamos archivos a tu biblioteca.</p>`);
+  shell(`<div class="topline"><div><p class="muted">Tu espacio en IVOX</p><h1>Mi biblioteca</h1><p>Guarda lo que te mueve. Escúchalo desde cualquier dispositivo.</p></div><button id="new-online-playlist" class="primary">Nueva playlist</button></div><div class="library-tabs" role="group" aria-label="Colecciones"><button data-section="favorites">♡ Favoritos</button><button data-section="later">◷ Escuchar después</button><button data-section="history">Historial</button><button data-section="playlists">Playlists</button><button data-section="downloads">↓ Descargas</button></div><div id="online-library-content"></div><p class="provider-note">Referencias privadas de IVOX. Las descargas sin conexión se guardan solo en este dispositivo.</p>`);
   $('#new-online-playlist').onclick=()=>textForm('Nueva playlist','Nombre',async name=>{const p=await api('/api/playlists','POST',{name});onlineSection=p.id;history.replaceState({},'','/library');await onlineLibrary(true)});document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{onlineSection=b.dataset.section;history.replaceState({},'','/library');drawOnlineLibrary()});drawOnlineLibrary();
 }
 function drawOnlineLibrary(){
   const el=$('#online-library-content');if(!el)return;document.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.section===onlineSection)));
+  if(onlineSection==='downloads'){drawDownloads(el);return}
   if(onlineSection==='playlists'){el.innerHTML=`<h2>Tus playlists</h2><div class="playlist-grid">${onlineData.playlists.map(p=>`<button class="playlist-card" data-playlist="${p.id}"><span aria-hidden="true">≋</span><strong>${esc(p.name)}</strong><small>${p.tracks.length} canciones online</small></button>`).join('')||'<p class="muted">Crea una playlist para reunir tus canciones.</p>'}</div>`;el.querySelectorAll('[data-playlist]').forEach(b=>b.onclick=()=>{onlineSection=b.dataset.playlist;drawOnlineLibrary()});return}
   const playlist=onlineData.playlists.find(p=>p.id===onlineSection),ids=playlist?playlist.tracks:onlineData.saves.filter(s=>onlineSection==='history'?s.last_played:onlineSection==='later'?s.later:s.favorite).map(s=>s.video_id),items=ids.map(id=>onlineData.items[id]).filter(Boolean),playable=items.filter(v=>v.available!==false);
   const title=playlist?playlist.name:onlineSection==='history'?'Historial de reproducción':onlineSection==='later'?'Escuchar después':'Favoritos de IVOX';
-  el.innerHTML=`<div class="topline"><h2>${esc(title)}</h2>${playlist?'<div class="tools"><button id="rename-online">Renombrar</button><button id="delete-online" class="danger">Eliminar playlist</button></div>':onlineSection==='history'?'<button id="clear-history">Borrar historial</button>':''}</div>${playable.length?`<div class="artist-actions collection-actions"><button class="primary" data-collection="play">▶ Reproducir</button><button data-collection="shuffle" aria-label="Reproducir en aleatorio">⤮ Aleatorio</button><button data-collection="queue">+ Añadir a la cola</button></div>`:''}<div id="library-videos">${videoCards(items,playlist?.id)}</div>`;bindVideoCards(el,items,playlist?.id);
-  el.querySelectorAll('[data-collection]').forEach(b=>b.onclick=()=>{const kind=b.dataset.collection;if(kind==='queue'){notify(enqueue(playable)?'Reproduciendo «'+title+'».':playable.length+' canciones añadidas a la cola.');return}playList(playable,0,kind==='shuffle')});
+  el.innerHTML=`<div class="topline"><h2>${esc(title)}</h2>${playlist?'<div class="tools"><button id="rename-online">Renombrar</button><button id="delete-online" class="danger">Eliminar playlist</button></div>':onlineSection==='history'?'<button id="clear-history">Borrar historial</button>':''}</div>${playable.length?`<div class="artist-actions collection-actions"><button class="primary" data-collection="play">▶ Reproducir</button><button data-collection="shuffle" aria-label="Reproducir en aleatorio">⤮ Aleatorio</button><button data-collection="queue">+ Añadir a la cola</button><button data-collection="offline">↓ Sin conexión${offline.premium()?'':' <span class="pill">Premium</span>'}</button></div>`:''}<div id="library-videos">${videoCards(items,playlist?.id)}</div>`;bindVideoCards(el,items,playlist?.id);
+  el.querySelectorAll('[data-collection]').forEach(b=>b.onclick=()=>{const kind=b.dataset.collection;if(kind==='offline'){offline.add(playable);return}if(kind==='queue'){notify(enqueue(playable)?'Reproduciendo «'+title+'».':playable.length+' canciones añadidas a la cola.');return}playList(playable,0,kind==='shuffle')});
   if(playlist){$('#rename-online').onclick=()=>textForm('Renombrar playlist','Nombre',async name=>{await api('/api/playlists/'+playlist.id,'PATCH',{name});await onlineLibrary(true)},playlist.name);$('#delete-online').onclick=()=>confirmAction('¿Eliminar esta playlist?','Se eliminan sus referencias online y asociaciones locales. Los archivos de biblioteca y el contenido del proveedor no se borran.',async()=>{await api('/api/playlists/'+playlist.id,'DELETE');onlineSection='playlists';await onlineLibrary(true)})}
   if($('#clear-history'))$('#clear-history').onclick=()=>confirmAction('¿Borrar tu historial?','Solo se elimina el historial de IVOX.',async()=>{await api('/api/online/history','DELETE');await onlineLibrary(true)});
 }
@@ -352,7 +354,7 @@ async function startOnline(autostart=true,minimumLevel=1){
       if(version!==playVersion||!me)return;
     }
     activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped'}[result.source]||'Audius';
-    if(blobUrl&&result.url!==blobUrl)URL.revokeObjectURL(blobUrl);
+    if(blobUrl&&result.url!==blobUrl&&blobUrl!==window.crossfadeHold)URL.revokeObjectURL(blobUrl);
     blobUrl=result.source==='device'?result.url:null;
     onlineAudio.src=result.url;resolutionBusy=false;
     if(!autostart){clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
