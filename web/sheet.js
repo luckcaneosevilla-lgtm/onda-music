@@ -17,6 +17,7 @@ const nowPlaying={
     this.track(audioQueue[audioIndex]);drawQueue();if(sheetTab==='lyrics')loadLyrics();visualizer.sync();
   },
   close(silent=false){
+    cancelSheetSeek();
     if(sheet.hidden)return;sheet.classList.remove('open');document.body.classList.remove('sheet-open');
     setTimeout(()=>{if(!sheet.classList.contains('open'))sheet.hidden=true},reducedMotion.matches?0:320);
     if(!silent&&history.state?.sheet){ignorePop=true;history.back()}
@@ -29,6 +30,7 @@ const nowPlaying={
   },
   track(item){
     if(!item)return;const art=bigArt(item.thumbnail);
+    if(sheetSeekReference!==item.id){sheetSeeking=false;sheetSeekReference=item.id;sheetSeekEpoch++;this.progress(0,item.duration||0)}
     $('#sheet-title').textContent=item.title;$('#sheet-artist').textContent=item.channel||'';
     $('#sheet-context').textContent=item.radio?'Radio · canciones similares':item.provider==='local'?'Tus archivos':item.album||'Cola de reproducción';
     if(art){sheetCover.src=art;sheetCover.hidden=false;$('#sheet-backdrop-img').src=art}else{sheetCover.hidden=true;sheetCover.removeAttribute('src');$('#sheet-backdrop-img').removeAttribute('src')}
@@ -38,10 +40,12 @@ const nowPlaying={
     if(lyricsFor!==item.id&&sheetTab==='lyrics'&&!sheet.hidden)loadLyrics();
   },
   progress(time,total,loaded){
-    if(sheet.hidden)return;const ratio=total>0?Math.min(1,time/total):0;
-    $('#sheet-current').textContent=clock(time);$('#sheet-duration').textContent=clock(total);
-    $('#sheet-fill').style.width=ratio*100+'%';$('#sheet-buffer').style.width=(loaded||0)*100+'%';
-    if(!sheetSeeking)$('#sheet-range').value=Math.round(ratio*1000);
+    if(sheet.hidden)return;const valid=Number.isFinite(total)&&total>0,ratio=valid?Math.max(0,Math.min(1,time/total)):0;
+    $('#sheet-duration').textContent=clock(total);$('#sheet-range').disabled=!valid||!onlineAudio.seekable.length;
+    if(!sheetSeeking){$('#sheet-current').textContent=clock(time);$('#sheet-fill').style.width=ratio*100+'%';$('#sheet-range').value=Math.round(ratio*1000);$('#sheet-range').setAttribute('aria-valuetext',clock(time)+' de '+clock(total))}
+    const fragments=document.createDocumentFragment(),ranges=onlineAudio.buffered;
+    if(valid)for(let i=0;i<ranges.length;i++){const start=Math.max(0,Math.min(total,ranges.start(i))),end=Math.max(0,Math.min(total,ranges.end(i)));if(end<=start)continue;const segment=document.createElement('span');segment.style.left=start/total*100+'%';segment.style.width=(end-start)/total*100+'%';fragments.append(segment)}
+    $('#sheet-buffer').replaceChildren(fragments);
   },
   liked(){
     const item=audioQueue[audioIndex],on=!!(item&&savedVideo(item.id).favorite);
@@ -60,7 +64,9 @@ const nowPlaying={
 window.sheetPop=()=>{if(ignorePop){ignorePop=false;return true}if(!sheet.hidden){nowPlaying.close(true);return true}return false};
 
 // ---- Controls mirrored from the mini player ----------------------------------
-let sheetSeeking=false;
+let sheetSeeking=false,sheetSeekReference=null,sheetSeekEpoch=0;
+function cancelSheetSeek(){sheetSeeking=false;sheetSeekEpoch++;nowPlaying.progress(onlineAudio.currentTime,trackDuration())}
+function beginSheetSeek(){if(!sheetSeeking){sheetSeeking=true;sheetSeekReference=audioQueue[audioIndex]?.id;sheetSeekEpoch++}}
 $('#sheet-close').onclick=()=>nowPlaying.close();
 $('#sheet-toggle').onclick=()=>toggleOnline();
 $('#sheet-prev').onclick=()=>$('#online-previous').click();
@@ -68,8 +74,12 @@ $('#sheet-next').onclick=()=>nextTrack();
 $('#sheet-download').onclick=()=>perform(()=>downloadOnline(audioQueue[audioIndex]));
 $('#sheet-like').onclick=e=>{const v=audioQueue[audioIndex];if(v)perform(()=>setFavorite(v,!savedVideo(v.id).favorite,e.currentTarget))};
 $('#sheet-autoplay').onclick=()=>{setAutoplay(!autoplay);notify(autoplay?'Autoplay activado: la música no se detendrá.':'Autoplay desactivado.')};
-$('#sheet-range').oninput=e=>{sheetSeeking=true;const total=trackDuration();if(total>0){$('#sheet-fill').style.width=e.target.value/10+'%';$('#sheet-current').textContent=clock(total*e.target.value/1000)}};
-$('#sheet-range').onchange=e=>{sheetSeeking=false;window.IVoxPlayerControls.seek(trackDuration()*e.target.value/1000)};
+$('#sheet-range').onpointerdown=beginSheetSeek;
+$('#sheet-range').oninput=e=>{const total=trackDuration();if(!Number.isFinite(total)||total<=0)return;beginSheetSeek();$('#sheet-fill').style.width=e.target.value/10+'%';$('#sheet-current').textContent=clock(total*e.target.value/1000);e.target.setAttribute('aria-valuetext',clock(total*e.target.value/1000)+' de '+clock(total))};
+$('#sheet-range').onchange=e=>{const valid=sheetSeeking&&sheetSeekReference===audioQueue[audioIndex]?.id;sheetSeeking=false;if(valid)window.IVoxPlayerControls.seek(trackDuration()*e.target.value/1000);nowPlaying.progress(onlineAudio.currentTime,trackDuration())};
+$('#sheet-range').onpointercancel=$('#sheet-range').onblur=cancelSheetSeek;
+$('#sheet-range').onpointerup=()=>{const epoch=sheetSeekEpoch;setTimeout(()=>{if(sheetSeeking&&epoch===sheetSeekEpoch)cancelSheetSeek()},0)};
+onlineAudio.addEventListener('emptied',cancelSheetSeek);
 // Escape closes the sheet wherever focus is (a drag can leave it on <body>), unless a dialog is on top.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!sheet.hidden&&!dialog.open){e.preventDefault();nowPlaying.close()}});
 sheet.addEventListener('keydown',e=>{

@@ -11,11 +11,12 @@ Corrección del 28 de octubre de 2026, posterior a la optimización de streaming
 - Se elimina la segunda descarga completa automática que empezaba tras ocho segundos de escucha. Las copias anteriores siguen legibles; las nuevas escuchas no compiten con esa descarga. Se actualiza el texto de privacidad.
 - Las interrupciones ya no esperan veinte segundos ni saltan directamente a otra canción: tras tres segundos sin progreso se recarga la misma fuente y se restaura el segundo, con dos intentos máximos. Una vuelta de conectividad puede acelerar la recuperación. Los reintentos son únicos, conservan la intención de escuchar y se cancelan al pausar, cerrar o cambiar pista. Agotados los intentos se mantiene el respaldo existente y el mensaje de error.
 - Un corte del cuerpo HTTP o una continuación de prefijo inválida invalidan la URL del backend. La siguiente recuperación no repite eternamente el mismo prefijo roto. Las desconexiones del cliente al cambiar canción no invalidan URLs correctas.
-- La deduplicación de prefetch del frontend deja de durar toda la sesión: caduca a los treinta segundos para que una sesión larga pueda volver a preparar referencias. El service worker cambia a `ivox-app-shell-v8`.
+- La deduplicación de prefetch del frontend deja de durar toda la sesión: caduca a los treinta segundos para que una sesión larga pueda volver a preparar referencias. El service worker cambia a `ivox-app-shell-v9`.
+- El panel grande recibe también previsualización estable, buffer por segmentos, validación de duración y cancelación del seek al cambiar de tema o cerrar. Se conserva el área táctil de 44 px; una interacción antigua no puede mover la pista nueva.
 
 ## Comprobación
 
-`python tests/play_intent_check.py` ejecuta la app completa en Chromium móvil con audio WAV real y retrasos de red controlados. Casos: primer toque, toque repetido en carga, ambos controles, desbloqueo en curso, fuente asíncrona, caché local heredada, duración estilo Safari, error de red, espera de buffer, pausa durante espera, cambio durante espera y ausencia de descarga duplicada. Para probar temporizadores de cortes se simulan estados del medio y se avanza el reloj; no se presenta como prueba en un iPhone físico.
+`python tests/play_intent_check.py` ejecuta catorce casos de la app completa en Chromium móvil con audio WAV real y retrasos de red controlados: primer toque, toque repetido en carga, ambos controles, seek del panel grande, desbloqueo en curso, fuente asíncrona, caché local heredada, duración estilo Safari, error de red, espera de buffer, pausa durante espera, cambio durante espera y ausencia de descarga duplicada. Para probar temporizadores de cortes se simulan estados del medio y se avanza el reloj; no se presenta como prueba en un iPhone físico.
 
 `python -m unittest discover -s tests -p 'test_*.py'` incluye comprobación HTTP de cuerpo truncado: el cliente detecta la transferencia incompleta y el servidor invalida la URL para reconectar.
 

@@ -35,7 +35,7 @@ try:
   auth=browser.new_context()
   auth.request.post(base+'/api/register',data={'name':'Playback tests','email':'playback@example.test','password':'isolated-playback-tests'})
   state=auth.storage_state();auth.close()
-  for mode in ['first-tap','repeat-loading','sheet-first-tap','sheet-repeat-loading','unlock-in-flight','async-source','legacy-cache','safari-duration','recover-network','stall-reconnect','pause-stall','switch-stall','no-copy-download']:
+  for mode in ['first-tap','repeat-loading','sheet-first-tap','sheet-repeat-loading','sheet-seek','unlock-in-flight','async-source','legacy-cache','safari-duration','recover-network','stall-reconnect','pause-stall','switch-stall','no-copy-download']:
    print('Checking '+mode,flush=True)
    options={'viewport':{'width':390,'height':844},'is_mobile':True,'has_touch':True,'storage_state':state}
    if mode=='safari-duration':options['user_agent']='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1'
@@ -77,6 +77,18 @@ try:
    assert not result['paused'] and result['time']<3 and not result['fixing'],(mode,result)
    assert result['source']!='/silence.wav'
    assert not errors,errors
+   if mode=='sheet-seek':
+    page.evaluate("""() => {
+     const r=document.querySelector('#sheet-range');r.value=800;r.dispatchEvent(new Event('input'));progress(1,10);
+    }""")
+    assert page.locator('#sheet-current').inner_text()=='0:08'
+    assert page.locator('#sheet-fill').evaluate('(e)=>e.style.width')=='80%'
+    page.evaluate("document.querySelector('#sheet-range').dispatchEvent(new Event('change'))")
+    page.wait_for_function('() => onlineAudio.currentTime>=8 && !onlineAudio.seeking')
+    page.evaluate("""() => {Object.defineProperty(onlineAudio,'buffered',{configurable:true,value:{length:2,start:i=>[0,6][i],end:i=>[2,8][i]}});progress(8,10)}""")
+    assert page.locator('#sheet-buffer>span').count()==2
+    assert page.locator('#sheet-buffer>span').nth(1).evaluate('(e)=>e.style.left')=='60%'
+    assert page.locator('#sheet-range').bounding_box()['height']>=44
    if mode in ('recover-network','no-copy-download'):
     page.evaluate('() => {onlineAudio.currentTime=12;lastPlaybackTime=12}')
     page.wait_for_function('() => onlineAudio.currentTime>=12 && !onlineAudio.seeking')

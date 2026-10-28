@@ -3,67 +3,72 @@
   "controlled_cases": [
     {
       "case": "first-tap",
-      "playing_ms": 316.3,
+      "playing_ms": 504.8,
       "status": "passed"
     },
     {
       "case": "repeat-loading",
-      "playing_ms": 315,
+      "playing_ms": 312.5,
       "status": "passed"
     },
     {
       "case": "sheet-first-tap",
-      "playing_ms": 311.3,
+      "playing_ms": 317.5,
       "status": "passed"
     },
     {
       "case": "sheet-repeat-loading",
-      "playing_ms": 309.1,
+      "playing_ms": 311.9,
+      "status": "passed"
+    },
+    {
+      "case": "sheet-seek",
+      "playing_ms": 313.7,
       "status": "passed"
     },
     {
       "case": "unlock-in-flight",
-      "playing_ms": 313.5,
+      "playing_ms": 310,
       "status": "passed"
     },
     {
       "case": "async-source",
-      "playing_ms": 462.2,
+      "playing_ms": 463.2,
       "status": "passed"
     },
     {
       "case": "legacy-cache",
-      "playing_ms": 26.4,
+      "playing_ms": 24.3,
       "status": "passed"
     },
     {
       "case": "safari-duration",
-      "playing_ms": 311.1,
+      "playing_ms": 330.3,
       "status": "passed"
     },
     {
       "case": "recover-network",
-      "playing_ms": 315.6,
+      "playing_ms": 370.3,
       "status": "passed"
     },
     {
       "case": "stall-reconnect",
-      "playing_ms": 311.1,
+      "playing_ms": 344.4,
       "status": "passed"
     },
     {
       "case": "pause-stall",
-      "playing_ms": 315.3,
+      "playing_ms": 357.9,
       "status": "passed"
     },
     {
       "case": "switch-stall",
-      "playing_ms": 336.5,
+      "playing_ms": 331.1,
       "status": "passed"
     },
     {
       "case": "no-copy-download",
-      "playing_ms": 359.8,
+      "playing_ms": 341.7,
       "status": "passed"
     }
   ],
