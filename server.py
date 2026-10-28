@@ -483,7 +483,9 @@ class Handler(BaseHTTPRequestHandler):
         if method=='GET': self.send(200,user_view(c,t)); return
         require(method=='PATCH','Método no permitido.',405)
         b=json.loads(self.body()); action=b['action']; reason=str(b.get('reason',''))[:500]
-        require(t['id']!=u['id'],'No puedes cambiar tu propio plan, rol o estado.',403)
+        # Admins may upgrade their own plan, but never demote, suspend or re-role
+        # themselves: those could lock the last administrator out.
+        require(t['id']!=u['id'] or action in ('grant','trial','extend'),'No puedes quitarte Premium ni cambiar tu propio rol o estado.',403)
         before={k:t[k] for k in ('role','status','plan','expires')}; after=before.copy()
         if action in ('grant','trial','extend'):
             after['plan']='premium'

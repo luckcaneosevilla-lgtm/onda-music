@@ -57,6 +57,8 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(self.user.request('/api/admin/users')[0],403)
         self.assertEqual(self.user.request('/api/admin/users/'+self.uid,'PATCH',{'action':'grant'})[0],403)
         self.assertEqual(self.admin.request('/api/admin/users/'+self.aid,'PATCH',{'action':'revoke','confirm':True})[0],403)
+        status,me=self.admin.request('/api/admin/users/'+self.aid,'PATCH',{'action':'grant','expires':None})
+        self.assertEqual((status,me['plan'],me['role']),(200,'premium','admin'))
         self.assertEqual(self.user.request('/api/playlists','POST',{'name':'X'},{'X-CSRF-Token':'bad'})[0],403)
         self.assertEqual(self.user.request('/api/playlists','POST',{'name':'X'},{'Origin':'https://evil.example'})[0],403)
     def test_premium_lifecycle_open_sessions(self):
