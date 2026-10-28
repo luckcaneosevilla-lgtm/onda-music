@@ -1,0 +1,246 @@
+{
+  "date": "2026-10-28",
+  "environment": "local Windows; Chromium mobile emulation; public upstreams; no production SLA",
+  "results": {
+    "baseline": {
+      "label": "baseline",
+      "metric": "resolver to first upstream audio byte; not browser playing",
+      "cold": [
+        {
+          "id": "dQw4w9WgXcQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 1549.17,
+          "headers_ms": 358.93,
+          "first_byte_ms": 1908.35
+        },
+        {
+          "id": "kJQP7kiw5Fk",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 3017.01,
+          "headers_ms": 959.53,
+          "first_byte_ms": 3998.74
+        },
+        {
+          "id": "fJ9rUzIMcZQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 3056.3,
+          "headers_ms": 519.02,
+          "first_byte_ms": 3587.36
+        }
+      ],
+      "url_cached": [
+        {
+          "id": "dQw4w9WgXcQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.03,
+          "headers_ms": 215.65,
+          "first_byte_ms": 223.99
+        },
+        {
+          "id": "kJQP7kiw5Fk",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.03,
+          "headers_ms": 877.85,
+          "first_byte_ms": 880.76
+        },
+        {
+          "id": "fJ9rUzIMcZQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.04,
+          "headers_ms": 211.01,
+          "first_byte_ms": 215.55
+        }
+      ],
+      "prefetched": [],
+      "cold_summary": {
+        "successes": 3,
+        "attempts": 3,
+        "median_ms": 3587.36,
+        "under_1000ms": 0
+      },
+      "url_cached_summary": {
+        "successes": 3,
+        "attempts": 3,
+        "median_ms": 223.99,
+        "under_1000ms": 3
+      },
+      "prefetched_summary": {
+        "successes": 0,
+        "attempts": 0,
+        "median_ms": null,
+        "under_1000ms": 0
+      }
+    },
+    "optimized": {
+      "label": "optimized",
+      "metric": "resolver to first upstream audio byte; not browser playing",
+      "cold": [
+        {
+          "id": "dQw4w9WgXcQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 308.44,
+          "headers_ms": 256.06,
+          "first_byte_ms": 570.9
+        },
+        {
+          "id": "kJQP7kiw5Fk",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 1338.95,
+          "headers_ms": 240.99,
+          "first_byte_ms": 1590.4
+        },
+        {
+          "id": "fJ9rUzIMcZQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 1745.94,
+          "headers_ms": 246.62,
+          "first_byte_ms": 2009.16
+        }
+      ],
+      "url_cached": [
+        {
+          "id": "dQw4w9WgXcQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.03,
+          "headers_ms": 234.63,
+          "first_byte_ms": 236.06
+        },
+        {
+          "id": "kJQP7kiw5Fk",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.03,
+          "headers_ms": 257.81,
+          "first_byte_ms": 268.15
+        },
+        {
+          "id": "fJ9rUzIMcZQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.03,
+          "headers_ms": 278.35,
+          "first_byte_ms": 285.82
+        }
+      ],
+      "prefetched": [
+        {
+          "id": "dQw4w9WgXcQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.03,
+          "headers_ms": 0.25,
+          "first_byte_ms": 0.67
+        },
+        {
+          "id": "kJQP7kiw5Fk",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.03,
+          "headers_ms": 0.04,
+          "first_byte_ms": 0.44
+        },
+        {
+          "id": "fJ9rUzIMcZQ",
+          "status": 206,
+          "bytes": 1,
+          "resolve_ms": 0.02,
+          "headers_ms": 0.03,
+          "first_byte_ms": 0.33
+        }
+      ],
+      "cold_summary": {
+        "successes": 3,
+        "attempts": 3,
+        "median_ms": 1590.4,
+        "under_1000ms": 1
+      },
+      "url_cached_summary": {
+        "successes": 3,
+        "attempts": 3,
+        "median_ms": 268.15,
+        "under_1000ms": 3
+      },
+      "prefetched_summary": {
+        "successes": 3,
+        "attempts": 3,
+        "median_ms": 0.44,
+        "under_1000ms": 3
+      }
+    },
+    "browser": {
+      "metric": "click to HTMLMediaElement playing on local Chromium",
+      "cold": [
+        {
+          "id": "dQw4w9WgXcQ",
+          "playing_ms": 790.6
+        },
+        {
+          "id": "kJQP7kiw5Fk",
+          "playing_ms": 2051.9
+        },
+        {
+          "id": "fJ9rUzIMcZQ",
+          "playing_ms": 1984.6
+        }
+      ],
+      "prefetched": [
+        {
+          "id": "dQw4w9WgXcQ",
+          "playing_ms": 33.1
+        },
+        {
+          "id": "kJQP7kiw5Fk",
+          "playing_ms": 36.8
+        },
+        {
+          "id": "fJ9rUzIMcZQ",
+          "playing_ms": 39.4
+        }
+      ],
+      "cold_summary": {
+        "attempts": 3,
+        "successes": 3,
+        "median_ms": 1984.6,
+        "under_1000ms": 1
+      },
+      "prefetched_summary": {
+        "attempts": 3,
+        "successes": 3,
+        "median_ms": 36.8,
+        "under_1000ms": 3
+      }
+    },
+    "innertube": [
+      {
+        "client": "WEB",
+        "id": "dQw4w9WgXcQ",
+        "status": 200,
+        "playability": "UNPLAYABLE",
+        "audio_formats": 0,
+        "direct_urls": 0,
+        "ciphered": 0,
+        "elapsed_ms": 523.31
+      },
+      {
+        "client": "IOS",
+        "id": "dQw4w9WgXcQ",
+        "status": 200,
+        "playability": "OK",
+        "audio_formats": 2,
+        "direct_urls": 0,
+        "ciphered": 0,
+        "elapsed_ms": 1083.4
+      }
+    ]
+  }
+}

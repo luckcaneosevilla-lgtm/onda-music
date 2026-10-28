@@ -1,5 +1,7 @@
 # IVOX
 
+Rendimiento de streaming: [arquitectura, métricas y resultados comprobados](docs/STREAMING_PERFORMANCE.md). Se incluyen prefetch de 500 KiB por pista, entrega progresiva con Range y caché de URLs de hasta dos horas (limitada por su firma). La prueba local obtuvo 33–39 ms hasta `playing` con prefetch; el objetivo de menos de un segundo para toda canción sin precarga sigue pendiente. No es una garantía de rendimiento en Koyeb.
+
 Descubrimiento musical online para uso privado: búsqueda principal con **ytmusicapi / YouTube Music**, respaldo **YouTube Data API**, y reproducción con **yt-dlp**, Piped y Audius mediante **HTML5 audio**. Se conservan cuentas, biblioteca privada, administración, roles y planes. El recorrido principal ya no depende de importaciones ni de un reproductor de YouTube.
 
 **Cadena actual:** yt-dlp (audio puro) → Piped audio puro → Piped MP4 muxado con audio → Audius → error y siguiente. Los MP4 con `videoOnly=false` ya no se descartan cuando `audioStreams` está vacío. El estado comprobado de cada nivel figura en [README_SECCION_REPRODUCCION.md](README_SECCION_REPRODUCCION.md), con informes separados de las verificaciones anteriores.

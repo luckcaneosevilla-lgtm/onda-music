@@ -17,6 +17,7 @@ AUDIUS={'data':[{'id':'AbCd1','title':'Fixture independiente','duration':180,'is
 
 class OnlineTests(unittest.TestCase):
     def setUp(self):
+        self.warm=patch.object(onda.resolver,'prefetch_many');self.warm.start();self.addCleanup(self.warm.stop)
         self.temp=tempfile.TemporaryDirectory();self.original=onda.DATA;onda.DATA=Path(self.temp.name);onda.TURSO=None;onda.init()
         self.server=onda.ThreadingHTTPServer(('127.0.0.1',0),onda.Handler);self.port=self.server.server_port
         threading.Thread(target=self.server.serve_forever,daemon=True).start()
@@ -116,12 +117,17 @@ class OnlineTests(unittest.TestCase):
             response=conn.getresponse();self.assertEqual(response.status,206);self.assertEqual(response.getheader('Content-Range'),'bytes 0-3/100');self.assertEqual(response.getheader('Accept-Ranges'),'bytes');self.assertEqual(response.read(),b'1234');conn.close()
         self.assertEqual(self.client.request('/api/audio/testVideo01',extra={'Range':'bytes=-'})[0],416)
         top=['testVideo01','testVideo02','testVideo03','testVideo04','testVideo05']
+        with onda.db() as c:
+            for video_id in top:c.execute('INSERT INTO online_catalog VALUES(?,?,?)',('piped:'+video_id,'{}',int(time.time())))
         with patch.object(onda.resolver,'prefetch_many') as prefetch:
             self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':top})[0],202)
             prefetch.assert_called_once_with(top)
             self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':top+['testVideo06']})[0],400)
             self.assertEqual(Client(self.port).request('/api/audio/prefetch','POST',{'video_ids':['testVideo01']})[0],401)
             self.assertEqual(prefetch.call_count,1)
+            prefetch.reset_mock()
+            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['unknown0000']})[0],202)
+            prefetch.assert_called_once_with([])
 
     def test_local_admin_recovery_expiry_single_use_and_session_revocation(self):
         link=onda.create_admin_recovery('one@test.com',self.port);token=link.split('#')[1]

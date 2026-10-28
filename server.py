@@ -18,6 +18,7 @@ from urllib.parse import urlparse, parse_qs, quote
 from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
+from streaming import metric
 import turso
 
 ROOT = Path(__file__).resolve().parent
@@ -88,7 +89,7 @@ def init():
         c.execute('DELETE FROM online_catalog WHERE refreshed<?',(now()-30*86400,))
         c.execute('INSERT OR IGNORE INTO plans VALUES(?,?,?,?,?)', ('free',1024*MB,10,50*MB,'{}'))
         c.execute('INSERT OR IGNORE INTO plans VALUES(?,?,?,?,?)', ('premium',20*1024*MB,200,250*MB,'{}'))
-    resolver.persist(DATA / 'onda.sqlite')
+    resolver.persist(DATA / 'onda.sqlite',cloud_factory=(lambda:turso.Connection(TURSO)) if TURSO else None,scope=os.environ.get('IVOX_AUDIO_CACHE_SCOPE'))
 
 def password_hash(password):
     salt = secrets.token_hex(16)
@@ -183,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self): self.dispatch()
 
     def dispatch(self):
-        self.unread_body=0;self.started=time.perf_counter()
+        self.unread_body=0;self.started=time.perf_counter();self.audio_video_id=None;self.audio_request_id=secrets.token_hex(8)
         try:
             self.connection.settimeout(20)
             self.unread_body=int(self.headers.get('Content-Length','0'))
@@ -297,11 +298,18 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/audio/prefetch' and method=='POST':
             ids=json.loads(self.body()).get('video_ids')
             require(isinstance(ids,list) and len(ids)<=5 and all(isinstance(v,str) for v in ids),'Datos inválidos.')
+            require(all(re.fullmatch('[A-Za-z0-9_-]{11}',v) for v in ids),'Referencia inválida.')
+            # Only references this account can already discover; no arbitrary warming API.
+            if ids:
+                marks=','.join('?' for _ in ids)
+                known={row[0] for row in c.execute('SELECT video_id FROM online_catalog WHERE video_id IN ('+marks+')',tuple('piped:'+v for v in ids))}
+                ids=[v for v in ids if 'piped:'+v in known]
             resolver.prefetch_many(ids)
             self.send(202,{});return
         m=re.fullmatch(r'/api/audio/([A-Za-z0-9_-]{11})',path)
         if m and method=='GET':
             video_id=m[1]
+            self.audio_video_id=video_id
             try:
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     item=resolver.resolve(video_id)
@@ -310,6 +318,7 @@ class Handler(BaseHTTPRequestHandler):
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
                 connection,response,mime=resolver.open(video_id,range_header)
             except AudioUnavailable:
+                metric('audio_request_failed',request_id=self.audio_request_id,video_id=video_id,total_ms=round((time.perf_counter()-self.started)*1000,2))
                 self.send(502,{'error':'audio_unavailable'});return
             return self.relay(c,connection,response,mime,1,self.download_name())
         if path.startswith('/api/online/'):
@@ -379,6 +388,7 @@ class Handler(BaseHTTPRequestHandler):
             require(2<=len(q)<=120,'Escribe entre 2 y 120 caracteres para buscar.')
             require(len(page)<=24000 and (not page or re.fullmatch('[A-Za-z0-9_=-]+',page)),'Página inválida.')
             result=provider.search(c,uid,q,page,params.get('source',['auto'])[0],params.get('filter',['songs'])[0])
+            resolver.prefetch_many([v['provider_id'] for v in result.get('items',[])[:5] if v.get('provider')=='piped'])
             c.commit();self.send(200,result);return
         if path=='/api/online/artist' and method=='GET':
             q=' '.join(parse_qs(urlparse(self.path).query).get('q',[''])[0].split());require(2<=len(q)<=120,'Búsqueda inválida.')
@@ -469,9 +479,15 @@ class Handler(BaseHTTPRequestHandler):
         return name or 'IVOX'
 
     def relay(self,c,connection,response,mime,level,download=None):
+        sent=0;first_byte_ms=None;outcome='complete';phase='headers'
+        timings=getattr(response,'ivox_timings',{})
         try:
             self.send_response(response.status);self.headers_common(mime)
             self.send_header('X-IVOX-Audio-Level',str(level))
+            self.send_header('Cache-Control','private, no-store')
+            self.send_header('X-Accel-Buffering','no')
+            self.send_header('X-IVOX-Audio-Cache','prefix' if timings.get('prefix_hit') else 'passthrough')
+            self.send_header('Server-Timing',', '.join(f'{key};dur={value}' for key,value in timings.items() if key.endswith('_ms')) or 'relay;dur=0')
             if download:
                 extension={'audio/mp4':'m4a','audio/webm':'webm','audio/mpeg':'mp3','audio/ogg':'ogg'}.get(mime.split(';')[0].strip(),'audio')
                 self.send_header('Content-Disposition',f"attachment; filename=\"IVOX.{extension}\"; filename*=UTF-8''{quote(download+'.'+extension)}")
@@ -479,18 +495,32 @@ class Handler(BaseHTTPRequestHandler):
                 value=response.getheader(header)
                 if value:self.send_header(header,value)
             # Safari only seeks (and trusts the length) when byte ranges are advertised.
-            self.send_header('Accept-Ranges',response.getheader('Accept-Ranges') or 'bytes')
+            accepts=response.getheader('Accept-Ranges')
+            if accepts:self.send_header('Accept-Ranges',accepts)
+            elif response.status==206:self.send_header('Accept-Ranges','bytes')
             self.end_headers()
             if TRACE: print(f'[trace] audio headers {self.headers.get("Range")} {time.perf_counter()-self.started:.3f}s',flush=True)
             while True:
                 try:self.session(c)
-                except Problem:break
-                chunk=response.read(65536)
+                except Problem:outcome='session_revoked';self.close_connection=True;break
+                # HTTPResponse.read(n) waits for n bytes. read1 returns available
+                # bytes immediately, so slow upstreams cannot delay first sound
+                # merely to fill a 64 KiB server buffer.
+                reader=getattr(response,'read1',response.read)
+                phase='upstream_read'
+                chunk=reader(16384 if sent==0 else 65536)
                 if not chunk:break
+                phase='client_write'
                 self.wfile.write(chunk)
+                if sent==0:
+                    self.wfile.flush();first_byte_ms=round((time.perf_counter()-self.started)*1000,2)
+                    metric('audio_first_byte',request_id=self.audio_request_id,video_id=getattr(self,'audio_video_id',None),first_byte_ms=first_byte_ms,**timings)
+                sent+=len(chunk)
         except (OSError,http.client.HTTPException):
-            self.close_connection=True
-        finally:connection.close()
+            self.close_connection=True;outcome=phase+'_error'
+        finally:
+            connection.close()
+            metric('audio_complete',request_id=self.audio_request_id,video_id=getattr(self,'audio_video_id',None),first_byte_ms=first_byte_ms,total_ms=round((time.perf_counter()-self.started)*1000,2),bytes=sent,outcome=outcome,**timings)
 
     def admin(self,c,u,path,method):
         if path=='/api/admin/users' and method=='GET':

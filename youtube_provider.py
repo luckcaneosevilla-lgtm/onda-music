@@ -22,7 +22,7 @@ def load_environment(path):
         line=line.strip()
         if not line or line.startswith('#') or '=' not in line: continue
         key,value=line.split('=',1)
-        if key.strip() in ('YOUTUBE_API_KEY','YOUTUBE_REGION','ONDA_DATA','ONDA_SECURE_COOKIE','PIPED_API_URL','PIPED_PROXY_URL','AUDIUS_API_URL','ALLOW_YOUTUBE_EXTERNAL','TURSO_DATABASE_URL','TURSO_AUTH_TOKEN'):
+        if key.strip() in ('YOUTUBE_API_KEY','YOUTUBE_REGION','ONDA_DATA','ONDA_SECURE_COOKIE','PIPED_API_URL','PIPED_PROXY_URL','AUDIUS_API_URL','ALLOW_YOUTUBE_EXTERNAL','TURSO_DATABASE_URL','TURSO_AUTH_TOKEN','IVOX_AUDIO_CACHE_SCOPE','IVOX_YTDLP_FAST','IVOX_AUDIO_PREFETCH'):
             os.environ.setdefault(key.strip(),value.strip().strip('"').strip("'"))
 
 
