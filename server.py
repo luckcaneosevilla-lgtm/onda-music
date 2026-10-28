@@ -29,6 +29,8 @@ MB = 1024**2
 SESSION_SECONDS = 180*86400
 # Audio relays re-check the session for every chunk; with a cloud database each
 # check is a network round trip, so verified sessions are reused briefly.
+# IVOX_TRACE=1 prints how long each API request takes (time to audio headers too).
+TRACE = os.environ.get('IVOX_TRACE')=='1'
 SESSION_CACHE = {}; SESSION_CACHE_SECONDS = 20; session_guard = threading.Lock()
 def forget_sessions(token=None):
     with session_guard:
@@ -181,7 +183,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self): self.dispatch()
 
     def dispatch(self):
-        self.unread_body=0
+        self.unread_body=0;self.started=time.perf_counter()
         try:
             self.connection.settimeout(20)
             self.unread_body=int(self.headers.get('Content-Length','0'))
@@ -198,9 +200,23 @@ class Handler(BaseHTTPRequestHandler):
                             self.send_response(303);self.headers_common('text/plain; charset=utf-8');self.send_header('Location','/?next=/admin');self.send_header('Content-Length','0');self.end_headers();return
                         require(u['role']=='admin','Acceso reservado a administradores.',403)
                 require(self.command=='GET','Método no permitido.',405)
+                if path=='/landing' or path.startswith('/landing/'):
+                    asset=path.removeprefix('/landing').lstrip('/') or 'index.html'
+                    landing_types={'index.html':'text/html; charset=utf-8','style.css':'text/css; charset=utf-8','script.js':'text/javascript','logo.svg':'image/svg+xml','loader.html':'text/html; charset=utf-8','loader.css':'text/css; charset=utf-8','loader.js':'text/javascript','taglines.json':'application/json','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8'}
+                    require(asset in landing_types,'Archivo no encontrado.',404)
+                    if path=='/landing':
+                        self.send_response(302);self.headers_common('text/plain');self.send_header('Location','/landing/');self.send_header('Content-Length','0');self.end_headers();return
+                    raw=(ROOT/'landing'/asset).read_bytes()
+                    self.send_response(200);self.headers_common(landing_types[asset]);self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
+                if path=='/.well-known/assetlinks.json':
+                    # Digital Asset Links for the Android app (Bubblewrap/TWA): see docs/IVOX_EMPAQUETADO_NATIVO.md.
+                    raw=os.environ.get('ANDROID_ASSETLINKS','').encode()
+                    if not raw and (DATA/'assetlinks.json').exists(): raw=(DATA/'assetlinks.json').read_bytes()
+                    require(raw,'No configurado.',404); json.loads(raw)
+                    self.send_response(200);self.headers_common('application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
                 if path=='/youtube-setup':
                     self.send(410,{'error':'La reproducción actual usa Piped y Audius. Consulta README_SECCION_REPRODUCCION.md.'});return
-                static_types={'app.js':'text/javascript','online.js':'text/javascript','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
+                static_types={'player-controls.js':'text/javascript','app.js':'text/javascript','online.js':'text/javascript','sheet.js':'text/javascript','sheet.css':'text/css','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 self.send_response(200); self.headers_common(static_types[filename])
@@ -226,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
         except ConnectionError: pass
         except Exception:
             import traceback; traceback.print_exc(); self.send(500,{'error':'No se pudo completar la operación.'})
+        finally:
+            if TRACE and urlparse(self.path).path.startswith('/api/'): print(f'[trace] {self.command} {urlparse(self.path).path} {time.perf_counter()-self.started:.3f}s',flush=True)
 
     def api(self,c,path):
         method=self.command
@@ -278,8 +296,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.admin(c,u,path,method)
         if path=='/api/audio/prefetch' and method=='POST':
             ids=json.loads(self.body()).get('video_ids')
-            require(isinstance(ids,list) and len(ids)<=3 and all(isinstance(v,str) for v in ids),'Datos inválidos.')
-            for video_id in ids:resolver.prefetch(video_id)
+            require(isinstance(ids,list) and len(ids)<=5 and all(isinstance(v,str) for v in ids),'Datos inválidos.')
+            resolver.prefetch_many(ids)
             self.send(202,{});return
         m=re.fullmatch(r'/api/audio/([A-Za-z0-9_-]{11})',path)
         if m and method=='GET':
@@ -355,13 +373,24 @@ class Handler(BaseHTTPRequestHandler):
     def online(self,c,u,path,method):
         uid=u['id']
         if path=='/api/online/status' and method=='GET':
-            self.send(200,{'configured':True,'source':'piped','allow_youtube_external':os.environ.get('ALLOW_YOUTUBE_EXTERNAL')=='1'});return
+            self.send(200,{'configured':True,'source':'piped','piped':provider.piped_available(),'allow_youtube_external':os.environ.get('ALLOW_YOUTUBE_EXTERNAL')=='1'});return
         if path=='/api/online/search' and method=='GET':
             params=parse_qs(urlparse(self.path).query);q=' '.join(params.get('q',[''])[0].split());page=params.get('page',[''])[0]
             require(2<=len(q)<=120,'Escribe entre 2 y 120 caracteres para buscar.')
             require(len(page)<=24000 and (not page or re.fullmatch('[A-Za-z0-9_=-]+',page)),'Página inválida.')
             result=provider.search(c,uid,q,page,params.get('source',['auto'])[0],params.get('filter',['songs'])[0])
             c.commit();self.send(200,result);return
+        if path=='/api/online/artist' and method=='GET':
+            q=' '.join(parse_qs(urlparse(self.path).query).get('q',[''])[0].split());require(2<=len(q)<=120,'Búsqueda inválida.')
+            artist=provider.artist_lookup(c,uid,q);c.commit();self.send(200,{'artist':artist});return
+        m=re.fullmatch(r'/api/online/artist/(UC[A-Za-z0-9_-]{22})',path)
+        if m and method=='GET':
+            artist=provider.artist_page(c,uid,m[1]);c.commit();self.send(200,{'artist':artist});return
+        m=re.fullmatch(r'/api/online/(radio|lyrics)/((?:piped|audius):[A-Za-z0-9_-]+)',path)
+        if m and method=='GET':
+            require(valid_id(m[2]),'Referencia inválida.')
+            if m[1]=='lyrics':self.send(200,provider.lyrics(uid,m[2]));return
+            items=provider.radio(c,uid,m[2]);c.commit();self.send(200,{'items':items});return
         m=re.fullmatch(r'/api/online/play/((?:piped|audius):[A-Za-z0-9_-]+)',path)
         if m and method=='GET':
             require(valid_id(m[1]),'Referencia inválida.')
@@ -446,10 +475,13 @@ class Handler(BaseHTTPRequestHandler):
             if download:
                 extension={'audio/mp4':'m4a','audio/webm':'webm','audio/mpeg':'mp3','audio/ogg':'ogg'}.get(mime.split(';')[0].strip(),'audio')
                 self.send_header('Content-Disposition',f"attachment; filename=\"IVOX.{extension}\"; filename*=UTF-8''{quote(download+'.'+extension)}")
-            for header in ('Content-Length','Content-Range','Accept-Ranges'):
+            for header in ('Content-Length','Content-Range'):
                 value=response.getheader(header)
                 if value:self.send_header(header,value)
+            # Safari only seeks (and trusts the length) when byte ranges are advertised.
+            self.send_header('Accept-Ranges',response.getheader('Accept-Ranges') or 'bytes')
             self.end_headers()
+            if TRACE: print(f'[trace] audio headers {self.headers.get("Range")} {time.perf_counter()-self.started:.3f}s',flush=True)
             while True:
                 try:self.session(c)
                 except Problem:break
@@ -548,6 +580,8 @@ def main():
             c.execute("UPDATE users SET role='admin',status='active' WHERE id=?",(u['id'],)); audit(c,u['id'],u['id'],'bootstrap','Verificación local de contraseña',{'role':u['role']},{'role':'admin'}); c.commit()
         print('Administrador configurado. Recarga IVOX.')
     else:
+        # Warm pools: yt-dlp workers resolve one known video so the player JS is cached before the first play.
+        resolver.start(warm='jNQXAC9IVRw'); provider.music.start()
         print(f'IVOX: escuchando en 0.0.0.0:{args.port} · acceso local http://127.0.0.1:{args.port}'); OndaHTTPServer(('0.0.0.0',args.port),Handler).serve_forever()
 
 if __name__=='__main__': main()

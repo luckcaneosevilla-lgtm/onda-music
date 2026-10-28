@@ -50,7 +50,7 @@ def get_response(url,headers=None,timeout=15,local=False):
 
 class MusicProvider:
     def __init__(self):
-        self.lock=threading.Lock();self.cache={};self.cursor_key=secrets.token_bytes(32);self.tickets={};self.rate={};self.music=MusicSearch();self.youtube=YouTube()
+        self.lock=threading.Lock();self.cache={};self.extras={};self.piped_checked=(0,False);self.cursor_key=secrets.token_bytes(32);self.tickets={};self.rate={};self.music=MusicSearch();self.youtube=YouTube()
     @property
     def configured(self):return True
     @property
@@ -79,6 +79,14 @@ class MusicProvider:
         finally:
             if connection:connection.close()
 
+    def piped_available(self):
+        # Lets the player skip Piped levels when no instance runs. Never blocks a request:
+        # a refused localhost port can take ~2 s on Windows, so it refreshes in the background.
+        stamp,value=self.piped_checked
+        if time.time()-stamp>60:
+            self.piped_checked=(time.time(),value)
+            threading.Thread(target=lambda:setattr(self,'piped_checked',(time.time(),self.health())),daemon=True).start()
+        return value
     def health(self):
         conn=None
         try:
@@ -171,6 +179,8 @@ class MusicProvider:
     def search(self,c,user_id,q,page='',source='auto',kind='songs'):
         if source not in ('auto','ytmusic','youtube','piped','audius') or kind not in ('songs','artists'):raise ProviderError(400,'invalid_search','Fuente o filtro inválido.')
         key=(q.casefold(),page,source,kind)
+        # The lock only guards the cache and rate counters: provider calls run outside it,
+        # so one slow search never blocks other users or the artist lookup.
         with self.lock:
             cached=self.cache.get(key)
             if cached and cached[0]>time.time():self.store(c,cached[1]['items']);return dict(cached[1],cached=True)
@@ -178,25 +188,64 @@ class MusicProvider:
             if stamp>until:until,count=stamp+60,0
             if count>=20:raise ProviderError(429,'search_rate_limit','Demasiadas búsquedas seguidas. Espera un minuto.',60)
             self.rate[user_id]=(until,count+1)
-            if source=='auto' and page:raise ProviderError(400,'invalid_search','Selecciona la fuente de la página antes de continuar.')
-            if source in ('auto','ytmusic'):
-                try:result=self.music_search(c,q,page,kind)
-                except ProviderError as error:
-                    if error.status==400:raise
-                    try:
-                        result=self.youtube_search(c,q,'',kind);result['fallback']=True
-                    except ProviderError:
-                        if kind=='artists':raise ProviderError(502,'provider_unavailable','No se pudieron consultar los artistas. Prueba de nuevo o busca canciones.') from None
-                        try:result=self.search_one(c,q,'','piped')
-                        except ProviderError:result=self.search_one(c,q,'','audius')
-                        result['notice']='YouTube Music y YouTube Data API no están disponibles. Resultados de respaldo de '+result['source'].title()+'.';result['fallback']=True
-            elif source=='youtube':result=self.youtube_search(c,q,page,kind)
-            else:
-                if kind!='songs':raise ProviderError(400,'invalid_search','El filtro de artistas requiere YouTube Music o YouTube Data API.')
-                result=self.search_one(c,q,page,source)
-            self.cache={k:v for k,v in self.cache.items() if v[0]>stamp}
+        if source=='auto' and page:raise ProviderError(400,'invalid_search','Selecciona la fuente de la página antes de continuar.')
+        if source in ('auto','ytmusic'):
+            try:result=self.music_search(c,q,page,kind)
+            except ProviderError as error:
+                if error.status==400:raise
+                try:
+                    result=self.youtube_search(c,q,'',kind);result['fallback']=True
+                except ProviderError:
+                    if kind=='artists':raise ProviderError(502,'provider_unavailable','No se pudieron consultar los artistas. Prueba de nuevo o busca canciones.') from None
+                    try:result=self.search_one(c,q,'','piped')
+                    except ProviderError:result=self.search_one(c,q,'','audius')
+                    result['notice']='YouTube Music y YouTube Data API no están disponibles. Resultados de respaldo de '+result['source'].title()+'.';result['fallback']=True
+        elif source=='youtube':result=self.youtube_search(c,q,page,kind)
+        else:
+            if kind!='songs':raise ProviderError(400,'invalid_search','El filtro de artistas requiere YouTube Music o YouTube Data API.')
+            result=self.search_one(c,q,page,source)
+        with self.lock:
+            self.cache={k:v for k,v in self.cache.items() if v[0]>time.time()}
             if len(self.cache)>=200:self.cache.pop(next(iter(self.cache)))
-            self.cache[key]=(stamp+600,result);return result
+            self.cache[key]=(time.time()+600,result)
+        return result
+
+    # Artist profiles, radio and lyrics: cached, separately rate limited (the player
+    # calls them on its own), and every playable song is stored in the catalog.
+    def extra(self,user_id,key,seconds,fetch):
+        stamp=time.time()
+        with self.lock:
+            hit=self.extras.get(key)
+            if hit and hit[0]>stamp:return hit[1]
+            until,count=self.rate.get('x:'+user_id,(stamp+60,0))
+            if stamp>until:until,count=stamp+60,0
+            if count>=60:raise ProviderError(429,'rate_limit','Demasiadas peticiones seguidas. Espera un minuto.',60)
+            self.rate['x:'+user_id]=(until,count+1)
+        value=fetch()
+        with self.lock:
+            self.extras={k:v for k,v in self.extras.items() if v[0]>stamp}
+            if len(self.extras)>=300:self.extras.pop(next(iter(self.extras)))
+            self.extras[key]=(stamp+seconds,value)
+        return value
+    def artist_lookup(self,c,user_id,q):
+        profile=self.extra(user_id,('profile',q.casefold()),1800,lambda:self.music.profile(q))
+        if profile:self.store(c,profile['songs'])
+        return profile
+    def artist_page(self,c,user_id,browse_id):
+        profile=self.extra(user_id,('artist',browse_id),1800,lambda:self.music.get_artist(browse_id))
+        if not profile:raise ProviderError(404,'not_found','No se encontró el artista.')
+        self.store(c,profile['songs']);return profile
+    def radio(self,c,user_id,reference):
+        if not re.fullmatch(r'piped:[A-Za-z0-9_-]{11}',reference):raise ProviderError(400,'invalid_id','La radio solo está disponible para canciones de YouTube Music.')
+        raw=reference.split(':',1)[1]
+        tracks=self.extra(user_id,('radio',raw),600,lambda:self.music.radio(raw))
+        items=[self.music.normalize(t) for t in tracks];items=list({i['id']:i for i in items if i and i['id']!=reference}.values())
+        self.store(c,items);return items
+    def lyrics(self,user_id,reference):
+        if not re.fullmatch(r'piped:[A-Za-z0-9_-]{11}',reference):raise ProviderError(404,'no_lyrics','Letra no disponible.')
+        result=self.extra(user_id,('lyrics',reference),86400,lambda:self.music.lyrics(reference.split(':',1)[1]))
+        if not result:raise ProviderError(404,'no_lyrics','Letra no disponible para esta canción.')
+        return result
 
     def metadata(self,c,ids):
         result={}

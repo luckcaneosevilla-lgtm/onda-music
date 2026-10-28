@@ -3,16 +3,32 @@
 .search-options label{display:flex;align-items:center;gap:12px}
 
 /* Now-playing bar in frosted glass. data-state on the aside (idle|loading|
-   playing|paused) drives every visual state; data-expanded opens the full
-   controls on phones, where the bar is a compact mini-player by default. */
+   playing|paused|error) drives every visual state. On phones the bar is a
+   compact mini-player; the full controls live in the Now Playing sheet. */
 #online-player{--glow:#3a5bd0;position:fixed;left:240px;right:0;bottom:0;z-index:3;padding:14px 24px 10px;background:linear-gradient(180deg,#16161ccc,#0d0d11e0);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);border-top:1px solid var(--line-gold);box-shadow:0 -20px 50px -20px #000,inset 0 1px 0 #ffffff0d;animation:np-in .45s var(--ease)}
-.np-seek{position:absolute;left:0;right:0;top:-2px;height:4px;background:#ffffff12;overflow:hidden;transition:height .15s,top .15s}
-.np-seek:hover,.np-seek:focus-within{height:10px;top:-5px}
+.np-seek{position:relative;height:44px;margin:-14px -24px 2px;touch-action:pan-y}
+.np-track{position:absolute;left:0;right:0;top:20px;height:4px;background:#ffffff12;overflow:hidden;pointer-events:none}
 #np-buffer,#np-fill{position:absolute;inset:0 auto 0 0;width:0;pointer-events:none}
-#np-buffer{background:#ffffff1c}
+#np-buffer{width:100%}
+#np-buffer>span{position:absolute;top:0;bottom:0;background:#ffffff42}
 #np-fill{background:linear-gradient(90deg,var(--lapis-2),var(--gold) 60%,var(--gold-2));box-shadow:0 0 14px #d4af37aa}
-#np-range{position:absolute;inset:-8px 0;width:100%;height:calc(100% + 16px);min-height:0;margin:0;opacity:0;cursor:pointer}
-[data-state=loading] .np-seek::after{content:'';position:absolute;inset:0;width:40%;background:linear-gradient(90deg,transparent,var(--gold),transparent);animation:np-sweep 1.1s ease-in-out infinite}
+#np-range{position:absolute;inset:0;width:100%;height:44px;min-height:44px;margin:0;padding:0;border:0;border-radius:0;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer;accent-color:var(--gold);box-shadow:none}
+#np-range::-webkit-slider-runnable-track{height:4px;background:transparent}
+#np-range::-moz-range-track{height:4px;background:transparent}
+#np-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;border-radius:50%;background:var(--gold-2,#e8ca68);border:1px solid #0a0a0c}
+#np-range::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--gold-2,#e8ca68);border:1px solid #0a0a0c}
+#np-range:focus-visible{outline:2px solid var(--gold);outline-offset:-3px}
+#np-range:disabled{cursor:default;opacity:.35}
+[data-state=loading] .np-track::after{content:'';position:absolute;inset:0;width:40%;background:linear-gradient(90deg,transparent,var(--gold),transparent);animation:np-sweep 1.1s ease-in-out infinite}
+.np-volume{position:relative}
+#np-volume-panel{position:absolute;right:0;bottom:54px;width:220px;padding:16px;background:#15151c;border:1px solid var(--line-gold);border-radius:14px;box-shadow:0 12px 35px #0008;z-index:5}
+#np-volume-panel label{display:block;font-size:12px;color:var(--gold-2);margin-bottom:6px}
+#np-volume-range{width:100%;height:44px;margin:0;padding:0;accent-color:var(--gold)}
+#np-mute{width:100%;font-size:12px}
+#np-volume-note{display:block;margin-top:10px;font-size:11px;color:var(--muted)}
+#np-volume-note[hidden],#np-volume-panel[hidden]{display:none}
+#np-volume-toggle.is-muted{color:var(--gold)}
+.np-row{touch-action:pan-y}
 .np-row{display:grid;grid-template-columns:58px minmax(0,1fr) auto auto;align-items:center;gap:16px}
 .np-art{position:relative;width:58px;height:58px;border-radius:12px;overflow:hidden;background:linear-gradient(135deg,var(--lapis),#0e1530);display:grid;place-items:center;box-shadow:0 8px 22px -6px #000,0 0 0 1px #d4af3733;cursor:pointer}
 .np-art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.np-glyph{font-size:22px;color:var(--gold-2)}
@@ -29,7 +45,6 @@
 .np-icon{display:grid;place-items:center;width:44px;height:44px;min-height:44px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted)}
 .np-icon:hover{background:#ffffff10;color:var(--gold-2);box-shadow:none}.np-icon:disabled{opacity:.3;cursor:default;background:transparent}
 .np-icon svg{width:22px;height:22px;fill:currentColor}
-#queue-toggle[aria-expanded=true]{color:var(--gold)}
 .np-play{position:relative;display:grid;place-items:center;width:54px;height:54px;padding:0;border:0;border-radius:50%;background:var(--gold-grad);color:#0a0a0c;box-shadow:0 8px 26px -6px #d4af37aa,inset 0 1px 0 #ffffff80;transition:transform .14s var(--ease),box-shadow .25s,filter .2s}
 .np-play:hover{transform:scale(1.07);filter:brightness(1.08);box-shadow:0 10px 34px -4px #d4af37cc,inset 0 1px 0 #ffffff80}.np-play:active{transform:scale(.92)}
 .np-play svg{width:26px;height:26px;fill:currentColor;grid-area:1/1}
@@ -38,16 +53,8 @@
 [data-state=loading] .np-ring{border-top-color:var(--gold-2);border-right-color:var(--lapis-2);animation:np-spin .8s linear infinite}
 [data-state=loading] .np-play svg{opacity:.35}
 .np-time{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:6px}
-#np-expand{display:none}
 #online-player #playback-status{margin:6px 0 0 74px;font-size:12px;color:var(--muted);min-height:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:none}
 #online-player #external-playback{margin-left:74px;font-size:12px}#online-player #external-playback:empty{display:none}
-#online-queue{list-style:none;margin:10px 0 0;padding:8px 0 0;border-top:1px solid var(--line);max-height:240px;overflow:auto;counter-reset:q}
-#online-queue li{display:flex;gap:8px;align-items:center;padding:2px 0;counter-increment:q}
-#online-queue li::before{content:counter(q);width:22px;text-align:right;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
-#online-queue li>button:first-child{flex:1;text-align:left;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-color:transparent;background:transparent;box-shadow:none}
-#online-queue li>button:first-child:hover{background:#ffffff0a}
-#online-queue .current>button:first-child{color:var(--gold-2);font-weight:600}
-#online-queue li>button:last-child{min-width:44px;border-color:transparent;background:transparent;color:var(--muted);box-shadow:none}
 body.has-online-player .content{padding-bottom:200px}body.has-online-player #notice{bottom:150px;right:24px}
 
 /* The row that is playing glows gold; its play button mirrors the bar. */
@@ -64,25 +71,15 @@ body.has-online-player .content{padding-bottom:200px}body.has-online-player #not
 @keyframes np-pulse{50%{transform:scale(.94);filter:brightness(1.3)}}
 @keyframes np-eq{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
 
-/* iPhone: a compact mini-player above the tab bar; tap the song (or the
-   chevron) to expand previous/next, download, queue and status. */
+/* iPhone: a compact mini-player above the tab bar; tap the song, the chevron
+   or swipe up for the full Now Playing sheet. */
 @media(max-width:760px){
-  #online-player{left:8px;right:8px;bottom:calc(var(--tabbar) + 8px);padding:10px 10px 8px;border:1px solid var(--line-gold);border-radius:18px;overflow:hidden}
-  .np-seek{top:0;left:14px;right:14px;border-radius:2px}.np-seek:hover,.np-seek:focus-within{top:0;height:6px}
+  #online-player{left:8px;right:8px;bottom:calc(var(--tabbar) + 8px);padding:10px 10px 8px;border:1px solid var(--line-gold);border-radius:18px;overflow:visible}
+  .np-seek{margin:-10px -10px 2px}.np-track{left:6px;right:6px;border-radius:2px}
   .np-row{grid-template-columns:46px minmax(0,1fr) auto;grid-template-areas:"art head ctrl";gap:10px}
   .np-art{grid-area:art;width:46px;height:46px;border-radius:10px}#online-player .player-heading{grid-area:head}
   .np-controls{grid-area:ctrl;gap:2px}.np-play{width:48px;height:48px}.np-play svg{width:22px;height:22px}
-  #online-previous,.np-extra,#online-player #playback-status,#online-player #external-playback,#online-queue{display:none}
-  #np-expand{display:grid}
-  #online-player[data-expanded] .np-row{grid-template-areas:"art head ctrl" "extra extra extra"}
-  #online-player[data-expanded] #online-previous{display:grid}
-  #online-player[data-expanded] .np-extra{display:flex;grid-area:extra;justify-content:space-between;padding-top:4px;border-top:1px solid var(--line)}
-  #online-player[data-expanded] .np-time{display:block}
-  #online-player[data-expanded] #playback-status{display:block;margin:6px 0 0;text-align:center}
-  #online-player[data-expanded] #external-playback{display:block;margin:6px 0 0;text-align:center}
-  #online-player[data-expanded] #online-queue:not([hidden]){display:block;max-height:32vh}
-  #online-player[data-expanded] #np-expand svg{transform:rotate(180deg)}
-  #np-expand svg{transition:transform .25s var(--ease)}
+  #online-previous,.np-extra,#online-player #playback-status,#online-player #external-playback{display:none}
   body.has-online-player .content{padding-bottom:calc(var(--tabbar) + 110px)}
   body.has-online-player #notice{bottom:calc(var(--tabbar) + 92px)}
 }

@@ -20,14 +20,23 @@ Abre http://127.0.0.1:8765. IVOX escucha en `0.0.0.0:8765`: también puedes acce
 
 ## Pantallas
 
-- `/`: búsqueda online real con filtros Canciones/Artistas, recientes privados y selector de fuentes. El respaldo automático anuncia el cambio de fuente.
+- `/`: búsqueda online real con filtros Canciones/Artistas, recientes privados y selector de fuentes. Si la búsqueda nombra a un artista (p. ej. «Feid», «Olivia Dean»), aparece primero su perfil: foto, nombre, oyentes mensuales, suscriptores, Reproducir/Aleatorio/Radio, sus 5 canciones populares y artistas similares; después, las canciones. El respaldo automático anuncia el cambio de fuente.
+- `/artist/<id>`: perfil completo del artista (banner, biografía, populares, «Fans también escuchan»).
 - `/library`: favoritos, playlists, historial y escuchar después; se guardan referencias de proveedor, no audio descargado.
 - `/plan`: estado y límites del plan. Buscar y reproducir están disponibles en Free y Premium.
 - `/admin`: usuarios, resumen real, Premium manual, suspensión/reactivación, roles y auditoría.
 - `/files`: importaciones y biblioteca de archivos anteriores, como opción secundaria.
 - `/privacy`: explicación de datos y eliminación de la biblioteca online propia.
 
-La barra de audio permanece al navegar. Incluye los controles nativos de progreso, play/pausa y volumen (cuando el navegador lo admite), cola y anterior/siguiente. En iPhone basta un toque en Play: el primer toque en la app desbloquea el audio. No se promete reproducción con pantalla bloqueada ni offline.
+La barra de audio permanece al navegar. Incluye progreso, play/pausa, volumen (cuando el navegador lo admite), me gusta, cola y anterior/siguiente. En iPhone basta un toque en Play: el primer toque en la app desbloquea el audio. No se promete reproducción con pantalla bloqueada ni offline.
+
+### Reproductor
+
+- **Un solo `<audio>`** para canciones online, copias del dispositivo y archivos importados. Cada cambio de canción aborta con un `AbortController` las peticiones de la anterior; los toques rápidos en anterior/siguiente solo mueven la selección y la canción se carga 200 ms después del último toque, cancelando la descarga previa.
+- **Errores:** cadena copia local → yt-dlp → Piped (solo si hay instancia) → misma canción en Audius. Si todo falla se muestra el motivo y se salta a la siguiente; tras 3 fallos seguidos se detiene. Un vigilante trata como fallida una canción que no empieza en 15 s y reabre en el mismo segundo un audio atascado 20 s.
+- **Safari:** si la duración no coincide con la del catálogo (Safari suele duplicarla en AAC por streaming) se fuerza la lectura real con un seek a 99999 s y vuelta; la barra, los seeks y la pantalla de bloqueo usan la duración corregida. El relay responde `206 Partial Content` con `Content-Range` y siempre `Accept-Ranges: bytes`.
+- **Autoplay / radio infinita:** cuando quedan 1-2 canciones, el servidor pide la radio de YouTube Music (`get_watch_playlist(radio=True)`) de la última canción y añade 10 similares, marcadas «Radio». Se activa o desactiva en el reproductor completo. Cualquier canción o artista ofrece «Iniciar radio».
+- **Reproductor completo** (toca la portada o el título, o desliza hacia arriba): portada grande con el color dominante de la carátula, letras sincronizadas (`get_lyrics(timestamps=True)`; toca una línea para saltar), cola reordenable arrastrando (con dedo o con flechas del teclado), me gusta con corazones flotantes o doble toque en la portada, deslizar portada para cambiar de canción y hacia abajo para cerrar, visualizador radial opcional (Web Audio; no se ofrece en iPhone porque silenciaría el audio en segundo plano). Atajos: espacio, Mayús+←/→, L.
 
 ### Búsqueda musical
 
@@ -37,9 +46,26 @@ El `videoId` se guarda como referencia compatible con la biblioteca existente y 
 
 Ante fallo de ytmusicapi se intenta **YouTube Data API** con `YOUTUBE_API_KEY` del backend. Si también falla o falta la clave, se mantienen Piped/Audius como respaldo de canciones; la fuente real y el cambio se indican en la interfaz. El filtro Artistas de YouTube Data API devuelve canales, identificados como tales, sin afirmar que todos sean artistas oficiales. Una respuesta válida sin coincidencias se presenta vacía, no se rellena con canciones ficticias.
 
-Se conserva caché de 10 minutos por consulta/filtro/fuente, límite de frecuencia, cancelación de respuestas antiguas y paginación con cursores firmados. ytmusicapi no expone aquí un cursor público de continuación: se amplía su límite de 20 en 20 y se presenta el siguiente tramo, hasta **100 resultados** por consulta. Para más resultados, ajusta la búsqueda. La localización interna del cliente se fija a inglés porque se observó una respuesta vacía de canciones con `language='es'` en esta versión; los títulos originales, acentos y la interfaz española se conservan. Cada consulta del cliente tiene límite de tiempo y el proceso completo se corta a los 25 segundos.
+La consulta a ytmusicapi vive en un proceso trabajador persistente (no uno por búsqueda), con peticiones concurrentes y límite de 10 s por petición HTTP y 25 s por operación. Perfiles de artista (30 min), radios (10 min) y letras (24 h) tienen caché propia y un límite de 60 peticiones por minuto, aparte del de búsquedas. Se conserva caché de 10 minutos por consulta/filtro/fuente, límite de frecuencia, cancelación de respuestas antiguas y paginación con cursores firmados. ytmusicapi no expone aquí un cursor público de continuación: se amplía su límite de 20 en 20 y se presenta el siguiente tramo, hasta **100 resultados** por consulta. Para más resultados, ajusta la búsqueda. La localización interna del cliente se fija a inglés porque se observó una respuesta vacía de canciones con `language='es'` en esta versión; los títulos originales, acentos y la interfaz española se conservan. Cada consulta del cliente tiene límite de tiempo y el proceso completo se corta a los 25 segundos.
 
 Instala con `python -m pip install -r requirements.txt`. En esta máquina la dependencia y sus paquetes se instalaron en `.vendor/`, aislados de los paquetes globales. Esta biblioteca es un cliente no oficial y puede necesitar actualizaciones si cambia el proveedor. Prueba real y capturas: `python tests/music_search_live.py`, informe en `test-results/ytmusic-live-report.json`.
+
+## Rendimiento medido
+
+`python tests/latency_live.py` arranca IVOX en una base temporal, busca consultas reales y mide hasta los primeros bytes de audio; `python tests/player_features_live.py` mide en Chromium desde el clic hasta el evento `playing`. Resultados en este equipo (Windows, misma red) del 28/10/2026, antes y después de esta versión:
+
+| | Antes | Ahora |
+| --- | --- | --- |
+| Búsqueda de canciones | 2,0–2,4 s | 0,5–0,7 s |
+| Canción precargada → primeros bytes | mediana 2,95 s (0 de 12 bajo 1,5 s) | mediana 0,49 s (12 de 12 bajo 1,5 s) |
+| Canción precargada → suena, en navegador | — | 0,5–0,8 s |
+| Canción **no** precargada → primeros bytes | mediana 3,3 s | mediana 2,4 s |
+
+Cómo: un grupo de 3 procesos yt-dlp **calientes** que conservan en memoria el JavaScript del reproductor y las funciones de firma (antes se lanzaba un proceso nuevo por canción, ~2,7 s); los toques del usuario tienen prioridad y ninguna precarga nueva empieza mientras se resuelve una canción pedida; se precargan las 5 primeras canciones de cada búsqueda, 2 populares del artista, las 2 siguientes de la cola y la fila bajo el dedo (`pointerdown`). La comprobación de Piped ya no bloquea (en Windows un puerto local cerrado tardaba 2 s por petición). Una canción que nadie precargó depende del tiempo de respuesta de YouTube para extraerla (1–2 s desde esta conexión): no baja de 1,5 s de forma fiable.
+
+**Sobre aria2c:** no se usa. IVOX no descarga archivos con yt-dlp: obtiene la URL (`-g`) y retransmite los bytes a medida que llegan, con soporte de rangos; los primeros 16 KB llegan en ~0,3 s desde que la URL está resuelta. aria2c solo acelera descargas completas a disco (y fragmentadas, que con `skip=hls,dash` no hay), así que añadiría una dependencia sin efecto en el tiempo hasta que suena la música. `IVOX_TRACE=1` imprime la duración de cada petición de la API para diagnosticar latencias.
+
+yt-dlp extrae hoy con su cliente sin JavaScript (`visionos`) porque no hay entorno JS (deno) instalado; yt-dlp lo marca como obsoleto. Si YouTube lo retira, habrá que instalar deno y el paquete `yt-dlp-ejs` en el servidor y en el Dockerfile.
 
 ## Primer administrador
 
@@ -129,6 +155,11 @@ python tests/online_live_check.py
 python tests/audio_levels_live.py
 python tests/pwa_check.py
 python tests/music_search_live.py
+python tests/player_controls_check.py
+python tests/player_features_live.py   # perfil de artista, latencia real, toques rápidos, saltos por error, radio, letras, cola, gestos
+python tests/latency_live.py           # tiempos de búsqueda y primeros bytes de audio
 ```
+
+`tests/pwa_check.py` necesita IVOX ya en marcha en el puerto 8765. `tests/online_live_check.py` necesita la instancia local de Piped (`docker compose up -d`) y `tests/browser_check.py` falla al abrir `/admin` igual en la versión anterior (fallo previo, pendiente de investigar; la parte de reproducir archivos importados pasa).
 
 Las cuentas y listas de prueba se crean en una base temporal, separada de tus datos. Resultados actuales en [README_SECCION_REPRODUCCION.md](README_SECCION_REPRODUCCION.md); informes y capturas en `test-results/`. La investigación de interfaz realizada con REA se documenta en [docs/rea-findings.md](docs/rea-findings.md). Los apartados anteriores de [docs/verification.md](docs/verification.md) conservan el historial de verificación del reproductor previo; no describen la arquitectura vigente.

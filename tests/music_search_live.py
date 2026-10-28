@@ -35,7 +35,8 @@ try:
         report['artist']=page.evaluate('() => searchView.artists.find(a=>a.name==="Feid")')
         page.screenshot(path=str(out/'ytmusic-artists-desktop.png'),full_page=True)
         page.locator('[data-artist="Feid"]').first.click();page.locator('[data-online-play]').first.wait_for(timeout=35000)
-        assert page.locator('#search-filter').input_value()=='songs'
+        # "Ver artista" opens the artist page: profile, popular songs, related artists.
+        assert page.evaluate('() => location.pathname').startswith('/artist/UC');assert page.locator('.artist-hero h2').inner_text()=='Feid'
         page.locator('[data-online-play]').first.click();page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>0.8',timeout=45000)
         report['playback']={'engine':page.evaluate('() => activeEngine'),'level':page.evaluate('() => activeLevel'),'current_time':page.evaluate('() => onlineAudio.currentTime')}
         assert report['playback']['engine']=='yt-dlp',report['playback']

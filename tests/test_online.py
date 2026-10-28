@@ -1,3 +1,4 @@
+import http.client
 import json
 import os
 import tempfile
@@ -107,13 +108,20 @@ class OnlineTests(unittest.TestCase):
         from unittest.mock import Mock
         with patch.object(onda.resolver,'open',return_value=(Mock(),Response(b'1234'),'audio/webm')) as request:
             status,r=self.client.request('/api/audio/testVideo01',extra={'Range':'bytes=0-3'});self.assertEqual(status,206);self.assertEqual(request.call_args.args[1],'bytes=0-3')
+        # Safari needs 206 + Content-Range + Accept-Ranges even when the upstream omits the last one.
+        class Bare(Response):
+            def getheader(self,key,default=None):return {'Content-Type':'audio/mp4','Content-Length':'4','Content-Range':'bytes 0-3/100'}.get(key,default)
+        with patch.object(onda.resolver,'open',return_value=(Mock(),Bare(b'1234'),'audio/mp4')):
+            conn=http.client.HTTPConnection('127.0.0.1',self.port);conn.request('GET','/api/audio/testVideo01',headers={'Cookie':self.client.cookie,'Range':'bytes=0-3'})
+            response=conn.getresponse();self.assertEqual(response.status,206);self.assertEqual(response.getheader('Content-Range'),'bytes 0-3/100');self.assertEqual(response.getheader('Accept-Ranges'),'bytes');self.assertEqual(response.read(),b'1234');conn.close()
         self.assertEqual(self.client.request('/api/audio/testVideo01',extra={'Range':'bytes=-'})[0],416)
-        with patch.object(onda.resolver,'prefetch') as prefetch:
-            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['testVideo01','testVideo02','testVideo03']})[0],202)
-            self.assertEqual([c.args[0] for c in prefetch.call_args_list],['testVideo01','testVideo02','testVideo03'])
-            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':['a','b','c','d']})[0],400)
+        top=['testVideo01','testVideo02','testVideo03','testVideo04','testVideo05']
+        with patch.object(onda.resolver,'prefetch_many') as prefetch:
+            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':top})[0],202)
+            prefetch.assert_called_once_with(top)
+            self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':top+['testVideo06']})[0],400)
             self.assertEqual(Client(self.port).request('/api/audio/prefetch','POST',{'video_ids':['testVideo01']})[0],401)
-            self.assertEqual(prefetch.call_count,3)
+            self.assertEqual(prefetch.call_count,1)
 
     def test_local_admin_recovery_expiry_single_use_and_session_revocation(self):
         link=onda.create_admin_recovery('one@test.com',self.port);token=link.split('#')[1]
@@ -154,5 +162,42 @@ class OnlineTests(unittest.TestCase):
         with patch.object(onda.provider.music,'search',side_effect=ProviderError(502,'ytmusic_unavailable','Fixture')),patch.object(onda.provider.youtube,'request',side_effect=api) as fallback:
             code,r=self.client.request('/api/online/search?q=Feid');self.assertEqual(code,200,r);self.assertTrue(r['fallback']);self.assertEqual(r['source'],'youtube');self.assertEqual(r['items'][0]['provider_id'],'testVideo01');self.assertEqual(r['items'][0]['duration'],197);self.assertEqual(fallback.call_count,2)
             self.assertNotIn('key=',json.dumps(r))
+
+    def test_artist_profile_radio_and_lyrics(self):
+        song={'videoId':'testSong001','title':'Popular','artists':[{'name':'Artista fixture'}],'album':{'name':'Disco'},'thumbnails':[{'url':'https://lh3.googleusercontent.com/a=w120-h120'}],'duration':'3:17'}
+        raw={'name':'Artista fixture','monthlyListeners':'34.5M','subscribers':'7.27M','description':'Bio','radioId':'RDEMx','thumbnails':[{'url':'https://yt3.googleusercontent.com/b=w2880-h1200-p-l90-rj'}],
+            'songs':{'results':[song]},'related':{'results':[{'title':'Otro','browseId':'UC'+'b'*22,'subscribers':'1M','thumbnails':[]},{'title':'Malo','browseId':'not-a-channel'}]}}
+        profile=onda.provider.music.artist_profile(raw,'UC'+'a'*22)
+        with patch.object(onda.provider.music,'profile',return_value=profile) as lookup:
+            code,r=self.client.request('/api/online/artist?q=Artista%20fixture');self.assertEqual(code,200,r)
+            a=r['artist'];self.assertEqual((a['name'],a['monthly_listeners'],a['subscribers']),('Artista fixture','34.5M','7.27M'))
+            self.assertEqual(a['avatar'],'https://yt3.googleusercontent.com/b=w544-h544-p-l90-rj');self.assertEqual([x['name'] for x in a['related']],['Otro'])
+            self.assertEqual(a['songs'][0]['id'],'piped:testSong001');self.assertEqual(a['songs'][0]['album'],'Disco')
+            self.client.request('/api/online/artist?q=artista%20FIXTURE');self.assertEqual(lookup.call_count,1)
+        # Songs from a profile are playable and savable without a prior search.
+        self.assertEqual(self.client.request('/api/online/items/piped:testSong001','PATCH',{'favorite':True})[0],200)
+        with patch.object(onda.provider.music,'profile',return_value=None):
+            self.assertIsNone(self.client.request('/api/online/artist?q=despacito')[1]['artist'])
+        with patch.object(onda.provider.music,'get_artist',return_value=profile):
+            self.assertEqual(self.client.request('/api/online/artist/UC'+'a'*22)[1]['artist']['name'],'Artista fixture')
+        self.assertEqual(self.client.request('/api/online/artist/UCshort')[0],404)
+        radio=[dict(song,videoId='testSong00'+str(i),length='2:52',duration=None,thumbnails=None,thumbnail=[{'url':'https://lh3.googleusercontent.com/r'}]) for i in range(2,8)]
+        with patch.object(onda.provider.music,'radio',return_value=radio) as fetch:
+            code,r=self.client.request('/api/online/radio/piped:testSong001');self.assertEqual(code,200,r)
+            self.assertEqual(len(r['items']),6);self.assertEqual(r['items'][0]['duration'],172);self.assertEqual(r['items'][0]['thumbnail'],'https://lh3.googleusercontent.com/r')
+            fetch.assert_called_once_with('testSong001')
+        self.assertEqual(self.client.request('/api/online/radio/audius:AbCd1')[0],400)
+        self.assertEqual(Client(self.port).request('/api/online/radio/piped:testSong001')[0],401)
+        lines={'synced':True,'lines':[{'start':0,'end':900,'text':'Hola'}],'source':'Source: LyricFind'}
+        with patch.object(onda.provider.music,'lyrics',return_value=lines):
+            self.assertEqual(self.client.request('/api/online/lyrics/piped:testSong001')[1],lines)
+        with patch.object(onda.provider.music,'lyrics',return_value=None):
+            self.assertEqual(self.client.request('/api/online/lyrics/piped:testSong002')[0],404)
+    def test_android_asset_links(self):
+        anonymous=Client(self.port)
+        self.assertEqual(anonymous.request('/.well-known/assetlinks.json')[0],404)
+        links=[{'relation':['delegate_permission/common.handle_all_urls'],'target':{'namespace':'android_app','package_name':'app.ivox.twa','sha256_cert_fingerprints':['AA:BB']}}]
+        (onda.DATA/'assetlinks.json').write_text(json.dumps(links))
+        code,r=anonymous.request('/.well-known/assetlinks.json');self.assertEqual(code,200);self.assertEqual(r,links)
 
 if __name__=='__main__':unittest.main()

@@ -17,3 +17,9 @@ test-results/
 .DS_Store
 Thumbs.db
 .vscode/
+# Android packaging secrets and build outputs
+*.keystore
+*.jks
+twa-manifest.json
+*.apk
+*.aab

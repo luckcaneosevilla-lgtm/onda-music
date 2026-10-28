@@ -40,7 +40,7 @@ try:
             f.setnchannels(1);f.setsampwidth(2);f.setframerate(8000);f.writeframes(struct.pack('<h',0)*8000)
         page.locator('#files').set_input_files({'name':'Silencio de prueba.wav','mimeType':'audio/wav','buffer':sample.getvalue()})
         page.get_by_role('button',name='Reproducir Silencio de prueba.wav',exact=True).click()
-        page.wait_for_function('() => document.querySelector("#audio").duration === 1')
+        page.wait_for_function('() => document.querySelector("#online-audio").duration === 1')
         page.get_by_role('link',name='Mi plan',exact=True).click()
         page.get_by_role('heading',name='Mi plan',exact=True).wait_for()
         page.screenshot(path=str(out/'plan-desktop.png'),full_page=True)

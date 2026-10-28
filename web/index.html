@@ -8,34 +8,70 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="IVOX">
   <link rel="apple-touch-icon" href="/icon-192x192.png">
-  <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/online.css"><link rel="stylesheet" href="/player.css">
-  <script src="/app.js" defer></script><script src="/online.js" defer></script>
+  <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/online.css"><link rel="stylesheet" href="/player.css"><link rel="stylesheet" href="/sheet.css">
+  <script src="/app.js" defer></script><script src="/player-controls.js" defer></script><script src="/online.js" defer></script><script src="/sheet.js" defer></script>
 </head>
 <body>
   <div id="app"></div><div id="notice" role="status" aria-live="polite"></div>
   <aside id="online-player" aria-label="Reproductor de audio" data-state="idle" hidden>
-    <div class="np-seek"><span id="np-buffer"></span><span id="np-fill"></span><input id="np-range" type="range" min="0" max="1000" value="0" step="1" aria-label="Posición de la canción"></div>
+    <div class="np-seek"><div class="np-track" aria-hidden="true"><span id="np-buffer"></span><span id="np-fill"></span></div><input id="np-range" type="range" min="0" max="1000" value="0" step="1" aria-label="Posición de la canción" disabled></div>
     <div class="np-row">
       <div class="np-art" aria-hidden="true"><img id="np-cover" alt="" hidden><span class="np-glyph">♫</span><span class="np-eq"><i></i><i></i><i></i><i></i></span></div>
       <div class="player-heading"><strong id="online-playing">Elige una canción</strong><small id="online-source">Audio online</small></div>
       <div class="np-controls">
+        <button id="np-like" class="np-icon like-button" aria-pressed="false" aria-label="Me gusta"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="heart-outline" d="M12 20.3 10.6 19C5.4 14.4 2 11.3 2 7.6 2 4.5 4.4 2.2 7.5 2.2c1.7 0 3.4.8 4.5 2.1 1.1-1.3 2.8-2.1 4.5-2.1 3.1 0 5.5 2.3 5.5 5.4 0 3.7-3.4 6.8-8.6 11.4z"/></svg></button>
         <button id="online-previous" class="np-icon" aria-label="Canción anterior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
         <button id="np-toggle" class="np-play" aria-label="Reproducir"><svg class="np-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><svg class="np-i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg><span class="np-ring" aria-hidden="true"></span></button>
         <button id="online-next" class="np-icon" aria-label="Canción siguiente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5l11 7-11 7z"/></svg></button>
-        <button id="np-expand" class="np-icon" aria-expanded="false" aria-label="Más controles"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6-1.4 1.4L12 11.8l-4.6 4.6z"/></svg></button>
+        <button id="np-expand" class="np-icon" aria-label="Abrir reproductor completo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6-1.4 1.4L12 11.8l-4.6 4.6z"/></svg></button>
       </div>
       <div class="np-extra">
         <span class="np-time"><span id="np-current">0:00</span> / <span id="np-duration">0:00</span></span>
+        <div class="np-volume">
+          <button id="np-volume-toggle" class="np-icon" aria-label="Volumen" aria-expanded="false" aria-controls="np-volume-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3zm12-3v2a5 5 0 0 1 0 8v2a7 7 0 0 0 0-12z"/></svg></button>
+          <div id="np-volume-panel" hidden><label for="np-volume-range">Volumen</label><input id="np-volume-range" type="range" min="0" max="100" step="1" value="100"><button id="np-mute" type="button" aria-pressed="false">Silenciar</button><small id="np-volume-note" hidden>Usa los botones de volumen del dispositivo.</small></div>
+        </div>
         <button id="np-download" class="np-icon" aria-label="Descargar canción"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v9l3.5-3.5 1.4 1.4L12 16.8l-5.9-5.9 1.4-1.4L11 13zM5 18h14v2H5z"/></svg></button>
-        <button id="queue-toggle" class="np-icon" aria-expanded="false" aria-controls="online-queue" aria-label="Ver cola"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm14-3v6l5-3z"/></svg></button>
+        <button id="queue-toggle" class="np-icon" aria-label="Ver cola"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm14-3v6l5-3z"/></svg></button>
         <button id="close-online" class="np-icon" aria-label="Detener y cerrar reproductor"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6 10.6 12 5 6.4z"/></svg></button>
       </div>
     </div>
     <p id="playback-status" role="status">Elige una canción.</p><div id="external-playback"></div>
-    <ol id="online-queue" hidden></ol>
     <audio id="online-audio" preload="auto" playsinline></audio>
   </aside>
-  <footer id="player" hidden><span id="playing">Elige una canción</span><button id="previous" aria-label="Canción anterior">←</button><audio id="audio" controls preload="metadata"></audio><button id="next" aria-label="Canción siguiente">→</button></footer>
+  <section id="np-sheet" role="dialog" aria-modal="true" aria-label="Reproduciendo ahora" data-state="idle" hidden>
+    <div class="sheet-backdrop" aria-hidden="true"><img id="sheet-backdrop-img" alt=""></div>
+    <header class="sheet-top">
+      <button id="sheet-close" class="np-icon" aria-label="Cerrar reproductor completo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6-1.4-1.4L12 12.2 7.4 7.6z"/></svg></button>
+      <div class="sheet-context"><small>Reproduciendo</small><strong id="sheet-context">Cola de reproducción</strong></div>
+      <button id="sheet-download" class="np-icon" aria-label="Descargar canción"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v9l3.5-3.5 1.4 1.4L12 16.8l-5.9-5.9 1.4-1.4L11 13zM5 18h14v2H5z"/></svg></button>
+    </header>
+    <div class="sheet-body">
+      <div class="sheet-main">
+        <div class="sheet-stage">
+          <canvas id="sheet-visualizer" aria-hidden="true" hidden></canvas>
+          <div id="sheet-cover-wrap" class="sheet-cover" title="Desliza para cambiar · doble toque: me gusta"><img id="sheet-cover" alt="" hidden><span class="np-glyph" aria-hidden="true">♫</span><span class="cover-heart" aria-hidden="true">♥</span></div>
+        </div>
+        <div class="sheet-meta"><div><h2 id="sheet-title">Elige una canción</h2><p id="sheet-artist"></p></div><button id="sheet-like" class="np-icon like-button" aria-pressed="false" aria-label="Me gusta"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="heart-outline" d="M12 20.3 10.6 19C5.4 14.4 2 11.3 2 7.6 2 4.5 4.4 2.2 7.5 2.2c1.7 0 3.4.8 4.5 2.1 1.1-1.3 2.8-2.1 4.5-2.1 3.1 0 5.5 2.3 5.5 5.4 0 3.7-3.4 6.8-8.6 11.4z"/></svg></button></div>
+        <div class="sheet-seek"><div class="sheet-track" aria-hidden="true"><span id="sheet-buffer"></span><span id="sheet-fill"></span></div><input id="sheet-range" type="range" min="0" max="1000" value="0" step="1" aria-label="Posición de la canción"><div class="sheet-times"><span id="sheet-current">0:00</span><span id="sheet-duration">0:00</span></div></div>
+        <div class="sheet-controls">
+          <button id="sheet-prev" class="np-icon" aria-label="Canción anterior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+          <button id="sheet-toggle" class="np-play" aria-label="Reproducir"><svg class="np-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><svg class="np-i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg><span class="np-ring" aria-hidden="true"></span></button>
+          <button id="sheet-next" class="np-icon" aria-label="Canción siguiente"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5l11 7-11 7z"/></svg></button>
+        </div>
+        <div class="sheet-toggles">
+          <button id="sheet-autoplay" class="chip" aria-pressed="true"><span aria-hidden="true">∞</span> Autoplay</button>
+          <button id="sheet-viz" class="chip" aria-pressed="false"><span aria-hidden="true">◎</span> Visualizador</button>
+        </div>
+        <label class="sheet-volume" id="sheet-volume-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3zm12-3v2a5 5 0 0 1 0 8v2a7 7 0 0 0 0-12z"/></svg><span class="sr-only">Volumen</span><input id="sheet-volume" type="range" min="0" max="100" step="1" value="100"></label>
+      </div>
+      <div class="sheet-panel">
+        <div class="sheet-tabs" role="tablist" aria-label="Contenido del reproductor"><button role="tab" id="tab-queue" aria-selected="true" aria-controls="panel-queue">Cola <small id="queue-count"></small></button><button role="tab" id="tab-lyrics" aria-selected="false" aria-controls="panel-lyrics" tabindex="-1">Letra</button></div>
+        <div id="panel-queue" role="tabpanel" aria-labelledby="tab-queue"><p id="queue-status" class="queue-status" role="status"></p><ol id="online-queue"></ol></div>
+        <div id="panel-lyrics" role="tabpanel" aria-labelledby="tab-lyrics" hidden><div id="lyrics" class="lyrics" aria-live="off"></div></div>
+      </div>
+    </div>
+  </section>
   <dialog id="dialog"></dialog>
   <script src="/pwa.js"></script>
 </body>

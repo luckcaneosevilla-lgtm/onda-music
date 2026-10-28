@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 200" fill="none" role="img" aria-labelledby="title">
+  <title id="title">IVOX — Ojo de Horus</title>
+  <g stroke="#D4AF37" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 77Q113 3 214 65M24 95Q112 30 214 86Q118 151 24 95Z"/>
+    <path d="M63 118L47 167L82 145M110 130V180M116 177C170 188 196 151 168 138C153 132 144 144 154 151"/>
+    <path d="M213 86L229 78"/>
+  </g>
+  <circle cx="120" cy="89" r="25" fill="#D4AF37"/>
+  <circle cx="128" cy="81" r="6" fill="#0a0a0c"/>
+</svg>
