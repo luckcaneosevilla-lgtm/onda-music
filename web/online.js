@@ -469,10 +469,14 @@ function recoverCurrent(){
   armWatchdog(version,8000);return true;
 }
 onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).catch(()=>{})}};
-onlineAudio.onerror=()=>{const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
-onlineAudio.addEventListener('playing',()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav')recoveryInFlight=false});
+// The last seconds of a song. Safari can stop there without 'ended' (a failed last range
+// request of the stream, or a catalogue length a little longer than the audio): that is the end.
+const nearTrackEnd=(margin=3)=>{const total=trackDuration();return total>0&&lastPlaybackTime>.25&&total-onlineAudio.currentTime<margin};
+let endedVersion=-1;
+onlineAudio.onerror=()=>{const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(nearTrackEnd()){onlineAudio.onended();return}if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
+onlineAudio.addEventListener('playing',()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav'){recoveryInFlight=false;endedVersion=-1}});
 onlineAudio.onended=async()=>{
-  if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav')return;const version=playVersion;
+  if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav'||endedVersion===playVersion)return;const version=playVersion;endedVersion=version;
   clearStall();clearTimeout(watchdog);
   if(audioIndex<audioQueue.length-1){advance();return}
   playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';let added=await ensureRadio(true);
@@ -485,14 +489,26 @@ function advance(){
   if(!audioQueue[audioIndex]?.radio&&audioQueue[audioIndex+1]?.radio)notify('Tu cola terminó: seguimos con recomendaciones similares.');
   audioIndex++;startOnline();
 }
-onlineAudio.onpause=()=>{if(!fixingDuration&&!resolutionBusy&&!onlineAudio.error&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&!['loading','error'].includes($('#online-player').dataset.state)){playbackWanted=false;clearStall();clearTimeout(watchdog);playerState('paused')}};
+// The listener's pause clears playbackWanted first; a pause the browser makes by itself in
+// the last seconds is the song ending ('ended' follows, or the timer stands in for it).
+onlineAudio.onpause=()=>{if(playbackWanted&&nearTrackEnd()&&!fixingDuration){const version=playVersion;setTimeout(()=>{if(version===playVersion&&playbackWanted&&onlineAudio.paused)onlineAudio.onended()},1500);return}if(!fixingDuration&&!resolutionBusy&&!onlineAudio.error&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&!['loading','error'].includes($('#online-player').dataset.state)){playbackWanted=false;clearStall();clearTimeout(watchdog);playerState('paused')}};
 // Do not replace the startup watchdog or postpone reconnection on every waiting event.
 onlineAudio.onwaiting=()=>{
   if(!playbackWanted||onlineAudio.paused||fixingDuration)return;
   playerState('loading');if(lastPlaybackTime<=.25||stallTimer!==null)return;
   const version=playVersion,at=onlineAudio.currentTime;
-  stallTimer=setTimeout(()=>{stallTimer=null;if(version!==playVersion||!playbackWanted||onlineAudio.paused)return;if(onlineAudio.currentTime>at+.1){onlineAudio.onwaiting();return}if(!recoverCurrent()){resolutionBusy=false;retryAudioLevel(version)}},3000);
+  stallTimer=setTimeout(()=>{stallTimer=null;if(version!==playVersion||!playbackWanted||onlineAudio.paused)return;if(onlineAudio.currentTime>at+.1){onlineAudio.onwaiting();return}if(nearTrackEnd()){onlineAudio.onended();return}if(!recoverCurrent()){resolutionBusy=false;retryAudioLevel(version)}},3000);
 };
+// Some browsers stop advancing without any 'waiting' or 'ended' event. A clock that has not
+// moved for 3 s while it should play ends the song (last seconds) or goes through the stall path.
+let frozenAt=-1,frozenSince=0;
+setInterval(()=>{
+  const src=onlineAudio.getAttribute('src'),t=onlineAudio.currentTime;
+  if(!playbackWanted||onlineAudio.paused||!src||src==='/silence.wav'||fixingDuration||resolutionBusy||recoveryInFlight||lastPlaybackTime<=.25||t!==frozenAt){frozenAt=t;frozenSince=Date.now();return}
+  if(Date.now()-frozenSince<3000)return;
+  frozenSince=Date.now();
+  if(nearTrackEnd())onlineAudio.onended();else if(stallTimer===null)onlineAudio.onwaiting();
+},1000);
 onlineAudio.addEventListener('seeked',()=>{lastPlaybackTime=onlineAudio.currentTime});
 window.addEventListener('online',()=>{if(playbackWanted&&$('#online-player').dataset.state==='loading'&&lastPlaybackTime>.25)recoverCurrent()});
 onlineAudio.oncanplay=()=>{if(!onlineAudio.paused&&$('#online-player').dataset.state==='loading'&&onlineAudio.readyState>=3)playerState('playing')};
