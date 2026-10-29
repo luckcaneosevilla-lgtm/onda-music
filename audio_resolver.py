@@ -183,13 +183,13 @@ class YtDlpResolver:
     def run(self,video_id,background=False):
         started=time.perf_counter()
         worker=self.acquire(4 if background else 12,background)
-        if worker is None:raise AudioUnavailable()
+        if worker is None:raise AudioUnavailable('worker_unavailable')
         acquired=time.perf_counter()
         try:url=worker.ask(video_id,self.timeout,compatible=True) if self.compatible.get(video_id,0)>time.time() else worker.ask(video_id,self.timeout)
         except (OSError,ValueError,queue.Empty) as error:
             self.release(worker,True)
             metric('audio_resolve',video_id=video_id,engine='yt-dlp',background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=False,error=type(error).__name__)
-            raise AudioUnavailable() from None
+            raise AudioUnavailable('extraction_timeout' if isinstance(error,queue.Empty) else 'worker_failed') from None
         self.release(worker)
         metric('audio_resolve',video_id=video_id,engine=getattr(worker,'last_engine','yt-dlp'),background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=bool(url))
         if not url:raise AudioUnavailable(getattr(worker,'last_error','extract_failed'))
@@ -252,7 +252,7 @@ class YtDlpResolver:
             with self.guard:
                 entry[1]-=1
                 if not entry[1]:self.locks.pop(video_id,None)
-            raise AudioUnavailable()
+            raise AudioUnavailable('resolution_busy')
         try:
             with self.guard:
                 cached=self.cache.get(video_id)
@@ -366,4 +366,6 @@ class YtDlpResolver:
             if retry:return self.open(video_id,range_header,False)
             raise AudioUnavailable(str(error) if isinstance(error,AudioUnavailable) else type(error).__name__) from None
 
-resolver=YtDlpResolver()
+# JS challenge solvers are memory-heavy. A small private deployment must not run
+# three copies at once and restart the entire app while several tracks are queued.
+resolver=YtDlpResolver(size=1)

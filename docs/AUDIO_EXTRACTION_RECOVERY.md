@@ -26,3 +26,10 @@ extracción), en lugar de cancelar una extracción válida a los quince segundos
 Estas medidas no garantizan disponibilidad universal de un proveedor externo.
 La verificación final debe volver a pedir audio al despliegue real, incluyendo
 CNCO, el artista comunicado por el usuario.
+
+En la primera verificación posterior al cambio se observaron 502 seguidos de
+503 con conexión rechazada. Se limita por ello el resolver compartido a un
+worker y se elimina la extracción triple de calentamiento al arrancar. Esto
+reduce los solvers JavaScript simultáneos y deja arrancar el HTTP sin esperar
+extracciones. La saturación/reinicio es una hipótesis basada en esas respuestas;
+no se dispone de los registros privados del proveedor para afirmar un OOM.

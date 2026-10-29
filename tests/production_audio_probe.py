@@ -41,18 +41,47 @@ def probe(item):
     return result
 
 
+def browser_probe(tracks):
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser=p.chromium.launch(env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'})
+        context=browser.new_context(viewport={'width':390,'height':844})
+        context.add_cookies([{'name':c.name,'value':c.value,'domain':c.domain,'path':c.path,
+                             'secure':c.secure,'httpOnly':True,'sameSite':'Strict'} for c in jar])
+        page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+        page.goto(origin)
+        page.wait_for_function('() => me && typeof playList === "function"')
+        page.evaluate("items => {setAutoplay(false);audioQueue=items;audioIndex=0;document.querySelector('#online-player').hidden=false}",tracks[:2])
+        page.locator('#np-toggle').click()
+        page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>1 && onlineAudio.readyState>=2',timeout=45000)
+        first=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,state:document.querySelector("#online-player").dataset.state})')
+        # Exercise the deployed Next button against another real song.
+        page.locator('#online-next').click()
+        page.wait_for_function('() => audioIndex===1 && !onlineAudio.paused && onlineAudio.currentTime>1 && onlineAudio.readyState>=2',timeout=45000)
+        second=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,state:document.querySelector("#online-player").dataset.state})')
+        page.evaluate('stopOnline()');browser.close()
+    result={'first':first,'next':second,'page_errors':errors}
+    assert not errors,errors
+    return result
+
+
 def main():
     api('/api/register',{'name':'Diagnóstico de reproducción','email':secrets.token_hex(12)+'@ivox-qa.invalid','password':secrets.token_urlsafe(28)})
-    queries=sys.argv[1:] or ['CNCO','Manuel Turizo']
+    queries=[a for a in sys.argv[1:] if not a.startswith('--')] or ['CNCO','Manuel Turizo']
     tracks=[]
     for query in queries:tracks.extend(api('/api/online/search?q='+urllib.parse.quote(query))['items'][:2])
     out=Path(__file__).resolve().parents[1]/'test-results';out.mkdir(exist_ok=True)
     runs=[]
     while True:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(probe,tracks))
+        # Match one listener's playback rather than creating an extraction burst.
+        results=[probe(item) for item in tracks]
         runs.append(results)
         (out/'production-audio-probe.json').write_text(json.dumps(runs,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(results,ensure_ascii=True),flush=True)
+        if '--browser' in sys.argv and all(r.get('status') in (200,206) for r in results):
+            result=browser_probe(tracks)
+            (out/'production-browser-audio.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+            print(json.dumps(result),flush=True)
         print('READY: retry or quit',flush=True)
         if sys.stdin.readline().strip()!='retry':break
 

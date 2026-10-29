@@ -631,7 +631,7 @@ def main():
         print('Administrador configurado. Recarga IVOX.')
     else:
         # Warm pools: yt-dlp workers resolve one known video so the player JS is cached before the first play.
-        resolver.start(warm='jNQXAC9IVRw'); provider.music.start()
+        resolver.start(); provider.music.start()
         if TURSO:
             # A cheap ping keeps one pooled TLS connection to Turso alive, so a request
             # after a quiet minute (the first Play, opening the library) never pays a handshake.
