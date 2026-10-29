@@ -36,8 +36,12 @@ class Quiet:
     info=warning=error=debug
 options=json.loads(sys.argv[1]);fast_options=copy.deepcopy(options)
 fast_options['extractor_args']['youtube']['player_skip']=['webpage','configs','initial_data']
+# Retry after YouTube refused a stream (datacenter IPs are often blocked for one client):
+# other player clients. tv/web_safari/mweb need a JS runtime (deno + yt-dlp-ejs, see Dockerfile).
+alt_options=copy.deepcopy(options);alt_options['extractor_args']['youtube']['player_client']=['tv','web_safari','mweb','visionos']
 ydl=YoutubeDL(dict(options,logger=Quiet()))
 fast=YoutubeDL(dict(fast_options,logger=Quiet()))
+alt=YoutubeDL(dict(alt_options,logger=Quiet()))
 print("ready",flush=True)
 for line in sys.stdin:
     parts=line.strip().split();video_id=parts[0] if parts else '';url=None;engine='yt-dlp-fast'
@@ -48,9 +52,10 @@ for line in sys.stdin:
             try:url=fast.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
             except Exception:pass
         if not url:
-            engine='yt-dlp-compatible'
-            try:url=ydl.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
-            except Exception:pass
+            for engine,client in ((('yt-dlp-alt',alt),('yt-dlp-compatible',ydl)) if len(parts)>1 else (('yt-dlp-compatible',ydl),)):
+                try:url=client.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
+                except Exception:pass
+                if url:break
     print(json.dumps({"id":video_id,"url":url,"engine":engine}),flush=True)
 '''
 
@@ -324,11 +329,12 @@ class YtDlpResolver:
                     url=urljoin(url,response.getheader('Location',''));connection.close();connection=None;continue
                 if response.status==416:return connection,response,item['mime']
                 mime=response.getheader('Content-Type','').split(';')[0]
-                if response.status not in (200,206) or not (mime.startswith('audio/') or mime=='application/octet-stream'):raise AudioUnavailable()
+                if response.status not in (200,206):raise AudioUnavailable(f'upstream_{response.status}')
+                if not (mime.startswith('audio/') or mime=='application/octet-stream'):raise AudioUnavailable('upstream_type')
                 response.ivox_timings={'resolve_ms':round((resolved-started)*1000,2),'upstream_headers_ms':round((time.perf_counter()-resolved)*1000,2),'prefix_hit':False}
                 return connection,response,mime if mime.startswith('audio/') else item['mime']
             raise AudioUnavailable()
-        except (OSError,http.client.HTTPException,AudioUnavailable,ProviderError):
+        except (OSError,http.client.HTTPException,AudioUnavailable,ProviderError) as error:
             if connection:connection.close()
             self.invalidate(video_id)
             with self.guard:
@@ -337,6 +343,6 @@ class YtDlpResolver:
                 self.compatible[video_id]=time.time()+600
             # A cached URL can be rejected early (e.g. new public IP); resolve once more.
             if retry:return self.open(video_id,range_header,False)
-            raise AudioUnavailable() from None
+            raise AudioUnavailable(str(error) if isinstance(error,AudioUnavailable) else type(error).__name__) from None
 
 resolver=YtDlpResolver()

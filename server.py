@@ -322,9 +322,11 @@ class Handler(BaseHTTPRequestHandler):
                 range_header=self.headers.get('Range')
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
                 connection,response,mime=resolver.open(video_id,range_header)
-            except AudioUnavailable:
-                metric('audio_request_failed',request_id=self.audio_request_id,video_id=video_id,total_ms=round((time.perf_counter()-self.started)*1000,2))
-                self.send(502,{'error':'audio_unavailable'});return
+            except AudioUnavailable as error:
+                # The reason (e.g. upstream_403: YouTube refused this server's IP) is safe to show.
+                reason=re.sub(r'[^A-Za-z0-9_]','',str(error))[:40]
+                metric('audio_request_failed',request_id=self.audio_request_id,video_id=video_id,reason=reason,total_ms=round((time.perf_counter()-self.started)*1000,2))
+                self.send(502,{'error':'audio_unavailable',**({'reason':reason} if reason else {})});return
             return self.relay(c,connection,response,mime,1,self.download_name())
         if path.startswith('/api/online/'):
             return self.online(c,u,path,method)
