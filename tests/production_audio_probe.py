@@ -3,7 +3,6 @@
 Type retry on stdin to repeat without creating another diagnostic account.
 No tokens, signed URLs, or credentials are printed or saved.
 """
-import concurrent.futures
 import http.cookiejar
 import json
 import os
@@ -53,14 +52,15 @@ def browser_probe(tracks):
         page.wait_for_function('() => me && typeof playList === "function"')
         page.evaluate("items => {setAutoplay(false);audioQueue=items;audioIndex=0;document.querySelector('#online-player').hidden=false}",tracks[:2])
         page.locator('#np-toggle').click()
-        page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>1 && onlineAudio.readyState>=2',timeout=45000)
+        page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>8 && onlineAudio.readyState>=2',timeout=45000)
         first=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,state:document.querySelector("#online-player").dataset.state})')
-        # Exercise the deployed Next button against another real song.
-        page.locator('#online-next').click()
-        page.wait_for_function('() => audioIndex===1 && !onlineAudio.paused && onlineAudio.currentTime>1 && onlineAudio.readyState>=2',timeout=45000)
+        # Seek to the real ending so the deployed media element must emit ended
+        # and advance itself, without clicking Next or synthesizing that event.
+        page.evaluate('() => {onlineAudio.currentTime=trackDuration()-1.5}')
+        page.wait_for_function('() => audioIndex===1 && !onlineAudio.paused && onlineAudio.currentTime>8 && onlineAudio.readyState>=2',timeout=45000)
         second=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,state:document.querySelector("#online-player").dataset.state})')
         page.evaluate('stopOnline()');browser.close()
-    result={'first':first,'next':second,'page_errors':errors}
+    result={'first':first,'automatic_next':second,'page_errors':errors}
     assert not errors,errors
     return result
 

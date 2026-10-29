@@ -39,3 +39,17 @@ las precargas de búsqueda ocupaban el único worker antes del Play. En este mod
 se desactivan las extracciones especulativas y se prioriza la intención de Play
 desde antes de esperar el bloqueo por canción. Una cola ocupada deja de guardar
 un fallo negativo de la canción durante treinta segundos.
+
+## Resultado en producción
+
+Tras publicar 657e91d, las pruebas públicas devolvieron 206, audio/mp4 y 32.768
+bytes válidos para «Reggaetón Lento (Bailemos)» y «Llegaste Tú» de CNCO, y «La
+Bachata» y «Una Lady Como Tú» de Manuel Turizo. Las primeras peticiones tardaron
+11,09–12,47 s: se recuperó la disponibilidad, no se demuestra arranque instantáneo.
+
+En Chromium móvil contra el dominio publicado se verificaron Play y Siguiente
+con las dos canciones de CNCO. Para Manuel Turizo, la primera canción reprodujo
+8,02 s; se buscó el final real del medio y, sin pulsar Siguiente ni simular el
+evento ended, la segunda reprodujo 8,01 s. No hubo errores JavaScript. No se
+presenta como comprobación en un iPhone físico ni como garantía sobre todo el
+catálogo. Las 36 pruebas unitarias y de integración del servidor también pasaron.
