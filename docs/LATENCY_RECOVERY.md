@@ -24,3 +24,13 @@ La medición pública posterior debe distinguir una canción preparada de una
 canción fría, y tiempo de primeros bytes de tiempo hasta HTMLMediaElement.playing.
 No se promete menos de un segundo universal ni se considera el tamaño de la
 caché una prueba de reproducción.
+
+La prueba pública inicial con precarga dio 122 ms desde Play hasta playing y
+165 ms desde el fin del primer audio hasta playing del siguiente. Las dos
+canciones reprodujeron más de ocho segundos, sin errores JavaScript.
+
+Al probar fuera de los primeros resultados se detectó además que una URL del
+cliente ligero podía llevar al respaldo alternativo antes de probar la ruta
+normal. Se conserva el motor de origen en memoria para pedir primero la ruta
+normal cuando se rechaza esa URL; los demás rechazos conservan el respaldo
+alternativo. Hay una prueba específica de URL ligera rechazada con HTTP 403.

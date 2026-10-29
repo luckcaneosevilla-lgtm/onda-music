@@ -68,7 +68,8 @@ for line in sys.stdin:
                 if url:engine='yt-dlp-direct'
             except Exception:pass
         if not url:
-            for engine,client in ((('yt-dlp-alt',alt),('yt-dlp-compatible',ydl)) if len(parts)>1 else (('yt-dlp-compatible',ydl),)):
+            clients=(('yt-dlp-compatible',ydl),('yt-dlp-alt',alt)) if len(parts)>1 and parts[1]=='standard' else ((('yt-dlp-alt',alt),('yt-dlp-compatible',ydl)) if len(parts)>1 else (('yt-dlp-compatible',ydl),))
+            for engine,client in clients:
                 try:url=client.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
                 except Exception as error:failure=reason(error)
                 if url:break
@@ -90,7 +91,7 @@ class Worker:
         line=self.lines.get(timeout=timeout)
         if line is None or line.strip()!='ready':raise OSError('worker did not start')
     def ask(self,video_id,timeout,compatible=False):
-        self.process.stdin.write(video_id+(' compatible' if compatible else '')+'\n');self.process.stdin.flush()
+        self.process.stdin.write(video_id+(' standard' if compatible=='standard' else ' compatible' if compatible else '')+'\n');self.process.stdin.flush()
         line=self.lines.get(timeout=timeout)
         if line is None:raise OSError('worker exited')
         self.served+=1
@@ -124,6 +125,7 @@ class YtDlpResolver:
         self.size=size;self.recycle=recycle;self.timeout=15;self.idle=[];self.count=0;self.available=threading.Condition(self.guard)
         self.pending=deque(maxlen=15);self.prefetchers=0;self.playing=0
         self.background_jobs={}
+        self.engines={};self.standard={}
         self.prefixes=PrefixCache();self.shared=None;self.cache_ttl=7200;self.compatible={}
     def persist(self,path,cloud_factory=None,scope=None):
         # Resolved URLs survive restarts; rows still honour the per-URL expiry.
@@ -211,7 +213,11 @@ class YtDlpResolver:
                 if not deferred:self.background_jobs[video_id]=worker
             if deferred:
                 self.release(worker);raise AudioUnavailable('background_deferred')
-        try:url=worker.ask(video_id,self.timeout,compatible=True) if self.compatible.get(video_id,0)>time.time() else worker.ask(video_id,self.timeout)
+        try:
+            if self.standard.get(video_id,0)>time.time():url=worker.ask(video_id,self.timeout,compatible='standard')
+            elif self.compatible.get(video_id,0)>time.time():url=worker.ask(video_id,self.timeout,compatible=True)
+            else:url=worker.ask(video_id,self.timeout)
+            engine=getattr(worker,'last_engine','yt-dlp');failure=getattr(worker,'last_error','extract_failed')
         except (OSError,ValueError,queue.Empty) as error:
             self.release(worker,True)
             metric('audio_resolve',video_id=video_id,engine='yt-dlp',background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=False,error=type(error).__name__)
@@ -221,8 +227,11 @@ class YtDlpResolver:
                 with self.guard:
                     if self.background_jobs.get(video_id) is worker:self.background_jobs.pop(video_id,None)
         self.release(worker)
-        metric('audio_resolve',video_id=video_id,engine=getattr(worker,'last_engine','yt-dlp'),background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=bool(url))
-        if not url:raise AudioUnavailable(getattr(worker,'last_error','extract_failed'))
+        with self.guard:
+            if len(self.engines)>=300:self.engines.pop(next(iter(self.engines)))
+            self.engines[video_id]=engine
+        metric('audio_resolve',video_id=video_id,engine=engine,background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=bool(url))
+        if not url:raise AudioUnavailable(failure)
         return url
     def prefetch(self,video_id):self.prefetch_many([video_id])
     def prefetch_many(self,ids):
@@ -309,7 +318,7 @@ class YtDlpResolver:
                 try:expiry=min(expiry,int(params.get('expire',[expiry+120])[0])-120)
                 except (ValueError,TypeError):pass
                 if expiry<=time.time():raise AudioUnavailable('expired_stream_url')
-                item={'url':url,'mime':mime,'expires':expiry}
+                item={'url':url,'mime':mime,'expires':expiry,'engine':self.engines.get(video_id,'yt-dlp')}
                 with self.guard:
                     self.cache={k:v for k,v in self.cache.items() if v['expires']>time.time()}
                     if len(self.cache)>=300:self.cache.pop(next(iter(self.cache)))
@@ -397,6 +406,9 @@ class YtDlpResolver:
                 self.compatible={k:v for k,v in self.compatible.items() if v>time.time()}
                 if len(self.compatible)>=300:self.compatible.pop(next(iter(self.compatible)))
                 self.compatible[video_id]=time.time()+600
+                self.standard={k:v for k,v in self.standard.items() if v>time.time()}
+                if item.get('engine')=='yt-dlp-direct':self.standard[video_id]=time.time()+600
+                else:self.standard.pop(video_id,None)
             # A cached URL can be rejected early (e.g. new public IP); resolve once more.
             if retry:return self.open(video_id,range_header,False)
             raise AudioUnavailable(str(error) if isinstance(error,AudioUnavailable) else type(error).__name__) from None

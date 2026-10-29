@@ -47,7 +47,7 @@ class YoutubeDL:
 '''
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory)/'yt_dlp.py').write_text(fake,encoding='utf-8')
-            for failed,line,engine in [(False,'dQw4w9WgXcQ','yt-dlp-direct'),(True,'dQw4w9WgXcQ','yt-dlp-compatible'),(False,'dQw4w9WgXcQ compatible','yt-dlp-alt')]:
+            for failed,line,engine in [(False,'dQw4w9WgXcQ','yt-dlp-direct'),(True,'dQw4w9WgXcQ','yt-dlp-compatible'),(False,'dQw4w9WgXcQ compatible','yt-dlp-alt'),(False,'dQw4w9WgXcQ standard','yt-dlp-compatible')]:
                 env={k:v for k,v in os.environ.items() if k not in ('SSLKEYLOGFILE','IVOX_YTDLP_FAST')}
                 env.update(PYTHONPATH=directory,FAIL_DIRECT='1' if failed else '0')
                 result=subprocess.run([sys.executable,'-c',WORKER,json.dumps(OPTIONS)],input=line+'\n',capture_output=True,text=True,env=env,timeout=5,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))

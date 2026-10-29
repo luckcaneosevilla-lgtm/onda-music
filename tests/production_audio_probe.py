@@ -62,7 +62,12 @@ def browser_probe(tracks):
           });
         }""")
         page.locator('#np-toggle').click()
-        page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>8 && onlineAudio.readyState>=2',timeout=45000)
+        try:
+            page.wait_for_function('() => audioIndex===0 && !onlineAudio.paused && onlineAudio.currentTime>8 && onlineAudio.readyState>=2',timeout=45000)
+        except Exception:
+            detail=page.evaluate('({index:audioIndex,id:audioQueue[audioIndex]?.id,time:onlineAudio.currentTime,state:document.querySelector("#online-player").dataset.state,message:document.querySelector("#playback-status").textContent,level:activeLevel,failures:failStreak,wanted:playbackWanted})')
+            print(json.dumps({'browser_failure':detail},ensure_ascii=True),flush=True)
+            browser.close();raise
         first=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,playing_ms:startMs,state:document.querySelector("#online-player").dataset.state})')
         # Seek to the real ending so the deployed media element must emit ended
         # and advance itself, without clicking Next or synthesizing that event.
@@ -79,7 +84,9 @@ def main():
     api('/api/register',{'name':'Diagnóstico de reproducción','email':secrets.token_hex(12)+'@ivox-qa.invalid','password':secrets.token_urlsafe(28)})
     queries=[a for a in sys.argv[1:] if not a.startswith('--')] or ['CNCO','Manuel Turizo']
     tracks=[]
-    for query in queries:tracks.extend(api('/api/online/search?q='+urllib.parse.quote(query))['items'][:2])
+    for query in queries:
+        found=api('/api/online/search?q='+urllib.parse.quote(query))['items']
+        tracks.extend([found[2],found[0]] if '--cold-third' in sys.argv else found[:2])
     out=Path(__file__).resolve().parents[1]/'test-results';out.mkdir(exist_ok=True)
     runs=[]
     while True:

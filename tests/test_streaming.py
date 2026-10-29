@@ -20,6 +20,23 @@ class Response:
     read1=read
 
 class StreamingTests(unittest.TestCase):
+    def test_rejected_lightweight_url_retries_the_standard_client(self):
+        resolver=YtDlpResolver();vid='dQw4w9WgXcQ'
+        direct={'url':URL,'mime':'audio/mp4','expires':time.time()+1000,'engine':'yt-dlp-direct'}
+        standard={**direct,'engine':'yt-dlp-compatible'}
+        good=Response(b'audio',status=200,headers={'Content-Type':'audio/mp4'})
+        def resolve(_):
+            if resolve.calls:
+                self.assertGreater(resolver.standard[vid],time.time())
+            resolve.calls+=1
+            return direct if resolve.calls==1 else standard
+        resolve.calls=0
+        with patch.object(resolver,'resolve',side_effect=resolve),patch('audio_resolver.get_response',side_effect=[(Mock(),Response(status=403)),(Mock(),good)]):
+            connection,response,mime=resolver.open(vid)
+        self.assertEqual(response.status,200)
+        self.assertEqual(mime,'audio/mp4')
+        self.assertEqual(resolve.calls,2)
+
     def item(self):return {'url':URL,'mime':'audio/mp4','expires':time.time()+1000,'data':b'abcd','total':10,'ETag':'fixed'}
     def test_prefix_is_immediate_then_exact_continuation(self):
         conn=Mock();open_=Mock(return_value=(conn,Response(b'efghij',headers={'Content-Range':'bytes 4-9/10','Content-Type':'audio/mp4','ETag':'fixed'})))
