@@ -33,3 +33,9 @@ worker y se elimina la extracción triple de calentamiento al arrancar. Esto
 reduce los solvers JavaScript simultáneos y deja arrancar el HTTP sin esperar
 extracciones. La saturación/reinicio es una hipótesis basada en esas respuestas;
 no se dispone de los registros privados del proveedor para afirmar un OOM.
+
+La siguiente prueba secuencial confirmó `resolution_busy` y `worker_unavailable`:
+las precargas de búsqueda ocupaban el único worker antes del Play. En este modo
+se desactivan las extracciones especulativas y se prioriza la intención de Play
+desde antes de esperar el bloqueo por canción. Una cola ocupada deja de guardar
+un fallo negativo de la canción durante treinta segundos.

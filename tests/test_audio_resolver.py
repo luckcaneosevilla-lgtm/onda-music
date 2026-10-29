@@ -33,6 +33,22 @@ class Process:
     def kill(self):self.killed=True;self.out.put(None)
 
 class ResolverTests(unittest.TestCase):
+    def test_busy_pool_is_not_remembered_as_an_unplayable_song(self):
+        r=YtDlpResolver()
+        with patch.object(r,'run',side_effect=[AudioUnavailable('worker_unavailable'),URL]) as run:
+            with self.assertRaisesRegex(AudioUnavailable,'worker_unavailable'):r.resolve('dQw4w9WgXcQ')
+            self.assertNotIn('dQw4w9WgXcQ',r.failures)
+            self.assertEqual(r.resolve('dQw4w9WgXcQ')['url'],URL)
+            self.assertEqual(r.playing,0)
+            self.assertEqual(run.call_count,2)
+
+    def test_small_pool_reserves_extraction_for_actual_play(self):
+        r=YtDlpResolver(size=1)
+        with patch.object(r,'spawn') as spawn:
+            r.prefetch_many(['dQw4w9WgXcQ'])
+            spawn.assert_not_called()
+            self.assertEqual(list(r.pending),[])
+
     def test_explicit_refresh_clears_negative_cache_and_is_bounded(self):
         r=YtDlpResolver();vid='dQw4w9WgXcQ'
         with patch.object(r,'run',side_effect=[AudioUnavailable('format_unavailable'),URL]) as run:

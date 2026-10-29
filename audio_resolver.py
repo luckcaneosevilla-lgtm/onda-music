@@ -197,6 +197,9 @@ class YtDlpResolver:
     def prefetch(self,video_id):self.prefetch_many([video_id])
     def prefetch_many(self,ids):
         if os.environ.get('IVOX_AUDIO_PREFETCH','1')=='0':return
+        # With a single worker, speculative searches must not take the only slot
+        # before Play. The foreground stream still caches its resolved URL.
+        if self.size==1:return
         # The whole batch is queued before any drainer starts, newest batch and top result first;
         # a bounded deque drops requests the user has scrolled away from.
         ids=[v for v in ids if isinstance(v,str) and re.fullmatch(r'[A-Za-z0-9_-]{11}',v)]
@@ -247,11 +250,13 @@ class YtDlpResolver:
             return hit
         with self.guard:
             entry=self.locks.setdefault(video_id,[threading.Lock(),0]);entry[1]+=1
+            if not background:self.playing+=1
         lock=entry[0];acquired=lock.acquire(timeout=20)
         if not acquired:
             with self.guard:
                 entry[1]-=1
                 if not entry[1]:self.locks.pop(video_id,None)
+                if not background:self.playing-=1;self.available.notify_all()
             raise AudioUnavailable('resolution_busy')
         try:
             with self.guard:
@@ -261,17 +266,15 @@ class YtDlpResolver:
                 if not background and cached['expires']<time.time()+300:self.prefetch(video_id)
                 return cached
             if failed:raise AudioUnavailable(self.failure_reasons.get(video_id,'recent_extraction_failure'))
-            if not background:
-                with self.guard:self.playing+=1
             try:
                 url=self.run(video_id,background)
-                if not url or not self.allowed(url):raise AudioUnavailable()
+                if not url or not self.allowed(url):raise AudioUnavailable('invalid_stream_url')
                 params=parse_qs(urlparse(url).query);mime=params.get('mime',['audio/webm'])[0]
-                if not mime.startswith('audio/'):raise AudioUnavailable()
+                if not mime.startswith('audio/'):raise AudioUnavailable('invalid_stream_type')
                 expiry=time.time()+self.cache_ttl
                 try:expiry=min(expiry,int(params.get('expire',[expiry+120])[0])-120)
                 except (ValueError,TypeError):pass
-                if expiry<=time.time():raise AudioUnavailable()
+                if expiry<=time.time():raise AudioUnavailable('expired_stream_url')
                 item={'url':url,'mime':mime,'expires':expiry}
                 with self.guard:
                     self.cache={k:v for k,v in self.cache.items() if v['expires']>time.time()}
@@ -282,7 +285,7 @@ class YtDlpResolver:
                 return item
             except AudioUnavailable as error:
                 # A busy pool is not the song's fault: only real extraction failures are remembered.
-                if not background:
+                if not background and str(error)!='worker_unavailable':
                     with self.guard:
                         self.failures={k:v for k,v in self.failures.items() if v>time.time()}
                         if len(self.failures)>=200:self.failures.pop(next(iter(self.failures)))
@@ -290,14 +293,12 @@ class YtDlpResolver:
                         self.failure_reasons={k:v for k,v in self.failure_reasons.items() if k in self.failures}
                         self.failure_reasons[video_id]=str(error) or 'extract_failed'
                 raise
-            finally:
-                if not background:
-                    with self.guard:self.playing-=1;self.available.notify_all()
         finally:
             lock.release()
             with self.guard:
                 entry[1]-=1
                 if not entry[1]:self.locks.pop(video_id,None)
+                if not background:self.playing-=1;self.available.notify_all()
     def invalidate(self,video_id):
         with self.guard:self.cache.pop(video_id,None)
         self.prefixes.remove(video_id)
