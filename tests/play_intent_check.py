@@ -90,6 +90,7 @@ try:
     assert page.locator('#sheet-buffer>span').nth(1).evaluate('(e)=>e.style.left')=='60%'
     assert page.locator('#sheet-range').bounding_box()['height']>=44
    if mode in ('recover-network','no-copy-download'):
+    page.evaluate('() => {audioQueue[audioIndex].duration=60}')
     page.evaluate('() => {onlineAudio.currentTime=12;lastPlaybackTime=12}')
     page.wait_for_function('() => onlineAudio.currentTime>=12 && !onlineAudio.seeking')
     if mode=='recover-network':
@@ -103,6 +104,8 @@ try:
      page.wait_for_timeout(350)
      assert len(media_requests)==before,'A second full download competes with playback'
    if mode in ('stall-reconnect','pause-stall','switch-stall'):
+    # This case stalls at 12 s in the 60 s fixture, not past a 10 s song's end.
+    page.evaluate('() => {audioQueue[audioIndex].duration=60}')
     page.clock.install()
     page.evaluate("""() => {
       lastPlaybackTime=12;

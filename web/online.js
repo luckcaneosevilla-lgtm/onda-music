@@ -9,7 +9,7 @@ let audioQueue=[],audioIndex=-1,playVersion=0,recordedReference=null,advanceTime
 // One controller per playback: changing song aborts every request of the previous one.
 let playController=null,skipTimer=null,watchdog,failStreak=0,audioUnlocked=false,resumeAt=0,fixingDuration=false;
 let playbackWanted=false,stallTimer=null,recoveryAttempts=0,lastPlaybackTime=0,recoveryInFlight=false;
-let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),freshRetried=new Set(),radioPromise=null,queueFinished=false,nearEnd=false,loadingSince=0;
+let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),freshRetried=new Set(),radioPromise=null,radioQueue=null,radioController=null,transitionIntent=0,queueFinished=false,nearEnd=false,loadingSince=0;
 const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`;
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
 const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id)||window.homeLookup?.(id)||window.offlineLookup?.(id);
@@ -322,6 +322,8 @@ function drawOnlineLibrary(){
 // Every start aborts the previous playback's requests and timers; late answers
 // and media events from an older version are ignored.
 function beginPlayback(){
+  transitionIntent++;
+  if(radioQueue&&radioQueue!==audioQueue){radioController?.abort();radioPromise=null;radioQueue=null}
   playController?.abort();playController=new AbortController();window.IVoxPlayerControls.cancelSeek();
   clearTimeout(advanceTimer);clearTimeout(skipTimer);skipTimer=null;clearTimeout(watchdog);
   clearTimeout(stallTimer);stallTimer=null;playbackWanted=false;recoveryAttempts=0;lastPlaybackTime=0;recoveryInFlight=false;
@@ -410,7 +412,15 @@ function skipTo(index){
   skipTimer=setTimeout(()=>{skipTimer=null;startOnline()},200);
 }
 const skipBy=delta=>skipTo(audioIndex+delta);
-function nextTrack(){if(audioIndex<audioQueue.length-1)return skipBy(1);notify('Buscando canciones similares…');ensureRadio(true).then(added=>{if(added)skipBy(1);else notify('No hay más canciones en la cola.')})}
+function nextTrack(){
+  if(audioIndex<audioQueue.length-1)return skipBy(1);
+  const queue=audioQueue,index=audioIndex,version=playVersion,intent=transitionIntent;
+  notify('Buscando canciones similares…');
+  ensureRadio(true).then(()=>{
+    if(queue!==audioQueue||index!==audioIndex||version!==playVersion||intent!==transitionIntent)return;
+    if(audioIndex<audioQueue.length-1)skipBy(1);else notify('No hay más canciones en la cola.');
+  });
+}
 // Autoplay radio: when the queue is about to run out, similar songs are appended.
 // Seeds go from the most recent songs back; one that adds nothing new is not asked again
 // (a failed request may be retried). Without a radio (Audius, own files, catalogue down)
@@ -419,26 +429,33 @@ const radioArtist=v=>v.provider==='local'?(v.title.includes(' - ')?v.title.split
 async function ensureRadio(force=false){
   if(!autoplay||!audioQueue.length)return false;
   if(!force&&audioIndex<audioQueue.length-2)return false;
-  if(radioPromise)return radioPromise;
+  if(radioPromise&&radioQueue===audioQueue)return radioPromise;
+  radioController?.abort();
   const queue=audioQueue;
-  const append=items=>{const have=new Set(audioQueue.map(v=>v.id)),fresh=items.filter(v=>v&&v.available!==false&&!have.has(v.id)&&!failedReferences.has(v.id)).slice(0,10).map(v=>({...v,radio:true}));if(!fresh.length)return false;audioQueue.push(...fresh);drawQueue();nowPlaying.radioAdded(fresh.length);if(audioIndex>=audioQueue.length-fresh.length-1&&nearEnd)prefetchNext();return true};
-  radioPromise=(async()=>{
+  const controller=new AbortController(),signal=controller.signal;
+  radioController=controller;radioQueue=queue;
+  // A slow recommendation service must not block the end of a song indefinitely.
+  const timeout=setTimeout(()=>controller.abort(),8000);
+  const append=items=>{if(queue!==audioQueue||!autoplay)return false;const have=new Set(audioQueue.map(v=>v.id)),fresh=(items||[]).filter(v=>v&&v.available!==false&&!have.has(v.id)&&!failedReferences.has(v.id)&&have.add(v.id)).slice(0,10).map(v=>({...v,radio:true}));if(!fresh.length)return false;audioQueue.push(...fresh);drawQueue();nowPlaying.radioAdded(fresh.length);if(audioIndex>=audioQueue.length-fresh.length-1&&nearEnd)prefetchNext();return true};
+  const task=(async()=>{
     const seeds=[...new Map([...audioQueue.slice(0,audioIndex+1).reverse(),...audioQueue.slice(audioIndex+1).reverse()].filter(v=>v.provider==='piped'&&!failedReferences.has(v.id)&&!radioTried.has(v.id)).map(v=>[v.id,v])).values()];
     // Prefer the last song in the queue, then what is playing now.
     const ordered=[audioQueue.at(-1),audioQueue[audioIndex],...seeds].filter((v,i,a)=>v&&seeds.includes(v)&&a.indexOf(v)===i).slice(0,3);
     for(const seed of ordered){
+      if(signal.aborted)break;
       radioTried.add(seed.id);
-      try{const r=await api('/api/online/radio/'+seed.id);if(queue!==audioQueue)return false;if(append(r.items))return true}catch{radioTried.delete(seed.id);if(queue!==audioQueue)return false}
+      try{const r=await api('/api/online/radio/'+seed.id,'GET',undefined,{signal});if(queue!==audioQueue)return false;if(append(r.items))return true}catch{if(queue!==audioQueue)return false;radioTried.delete(seed.id)}
     }
     const artists=[...new Set([audioQueue[audioIndex],audioQueue.at(-1)].filter(Boolean).map(radioArtist))].filter(n=>n.length>=2&&!radioTried.has('artist:'+n.toLowerCase()));
     for(const name of artists){
+      if(signal.aborted)break;
       radioTried.add('artist:'+name.toLowerCase());
-      try{const r=await api('/api/online/search?q='+encodeURIComponent(name.slice(0,120)));if(queue!==audioQueue)return false;if(append(r.items))return true}catch{radioTried.delete('artist:'+name.toLowerCase());if(queue!==audioQueue)return false}
+      try{const r=await api('/api/online/search?q='+encodeURIComponent(name.slice(0,120)),'GET',undefined,{signal});if(queue!==audioQueue)return false;if(append(r.items))return true}catch{if(queue!==audioQueue)return false;radioTried.delete('artist:'+name.toLowerCase())}
     }
     if(queue!==audioQueue)return false;
     return append(onlineData.saves.map(x=>onlineData.items[x.video_id]).filter(v=>v&&v.provider!=='local').sort(()=>Math.random()-.5));
-  })().finally(()=>{radioPromise=null});
-  return radioPromise;
+  })().finally(()=>{clearTimeout(timeout);if(radioPromise===task){radioPromise=null;radioQueue=null;radioController=null}});
+  radioPromise=task;return task;
 }
 function playList(list,index=0,shuffle=false){
   if(!list.length)return;const items=shuffle?[...list].sort(()=>Math.random()-.5):[...list];
@@ -454,12 +471,12 @@ function enqueue(items,next=false){
   if(queueFinished||$('#online-player').dataset.state==='error'||$('#online-player').hidden){audioIndex=at;failStreak=0;startOnline();return true}
   drawQueue();prefetchNext();return false;
 }
-function startRadio(v){audioQueue=[v];audioIndex=0;failedReferences.clear();radioTried.clear();startOnline();ensureRadio(true).then(added=>{if(added)notify('Radio de «'+v.title+'»: canciones similares en la cola.')})}
-function setAutoplay(on){autoplay=on;try{localStorage.setItem('ivox-autoplay',on?'1':'0')}catch{}if(on)ensureRadio();nowPlaying.state($('#online-player').dataset.state)}
+function startRadio(v){audioQueue=[v];audioIndex=0;failedReferences.clear();radioTried.clear();freshRetried.clear();failStreak=0;startOnline();ensureRadio(true).then(added=>{if(added&&audioQueue[0]?.id===v.id)notify('Radio de «'+v.title+'»: canciones similares en la cola.')})}
+function setAutoplay(on){autoplay=on;try{localStorage.setItem('ivox-autoplay',on?'1':'0')}catch{}if(on)ensureRadio();else radioController?.abort();drawQueue();nowPlaying.state($('#online-player').dataset.state)}
 window.playLocal=(items,index)=>playList(items,index);
 
 function clearStall(){clearTimeout(stallTimer);stallTimer=null;}
-function pausePlayback(){playbackWanted=false;recoveryInFlight=false;clearStall();clearTimeout(watchdog);onlineAudio.pause();if(audioQueue[audioIndex])playerState('paused');}
+function pausePlayback(){transitionIntent++;playbackWanted=false;recoveryInFlight=false;clearStall();clearTimeout(watchdog);onlineAudio.pause();if(audioQueue[audioIndex])playerState('paused');}
 function recoverCurrent(){
   const src=onlineAudio.getAttribute('src');
   if(recoveryInFlight)return playbackWanted;
@@ -479,14 +496,16 @@ let endedVersion=-1;
 onlineAudio.onerror=()=>{const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(nearTrackEnd()){onlineAudio.onended();return}if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
 onlineAudio.addEventListener('playing',()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav'){recoveryInFlight=false;endedVersion=-1}});
 onlineAudio.onended=async()=>{
-  if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav'||endedVersion===playVersion)return;const version=playVersion;endedVersion=version;
+  if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav'||endedVersion===playVersion)return;const version=playVersion,intent=transitionIntent;endedVersion=version;
   clearStall();clearTimeout(watchdog);
   if(audioIndex<audioQueue.length-1){advance();return}
   playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';let added=await ensureRadio(true);
   // One more try after a moment: a request that just failed (network, rate limit) may answer now.
-  if(!added&&version===playVersion){await new Promise(r=>setTimeout(r,3000));if(version===playVersion)added=await ensureRadio(true)}
-  if(version!==playVersion)return;
-  if(added&&audioIndex<audioQueue.length-1)advance();else{playbackWanted=false;queueFinished=true;playerState('paused');$('#playback-status').textContent='Fin de la cola. Añade una canción y sonará al momento.'}
+  if(version!==playVersion||intent!==transitionIntent)return;
+  if(!added&&autoplay&&audioIndex>=audioQueue.length-1){await new Promise(r=>setTimeout(r,3000));if(version===playVersion&&intent===transitionIntent)added=await ensureRadio(true)}
+  if(version!==playVersion||intent!==transitionIntent)return;
+  // The listener may have queued a song while recommendations were pending.
+  if(audioIndex<audioQueue.length-1)advance();else{playbackWanted=false;queueFinished=true;playerState('paused');$('#playback-status').textContent='Fin de la cola. Añade una canción y sonará al momento.'}
 };
 function advance(){
   if(!audioQueue[audioIndex]?.radio&&audioQueue[audioIndex+1]?.radio)notify('Tu cola terminó: seguimos con recomendaciones similares.');

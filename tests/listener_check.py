@@ -42,6 +42,8 @@ def run(browser,state,name,radio=None,favorites=(),library_delay=0):
     context.route('**/api/audio/prefetch',lambda r:r.fulfill(status=202,json={}))
     context.route('**/api/audio/*',lambda r:r.fulfill(body=SHORT if '/short' in r.request.url else LONG,content_type='audio/wav',headers={'Accept-Ranges':'bytes'}))
     context.route('**/api/online/status',lambda r:r.fulfill(json={'configured':True,'source':'piped','piped':False,'allow_youtube_external':False}))
+    context.route('**/api/online/charts',lambda r:r.fulfill(json={'country':'Test','songs':[],'artists':[]}))
+    context.route('**/api/online/search?*',lambda r:r.fulfill(json={'items':[]}))
     items={v['id']:v for v in favorites}
     def library(route):
         time.sleep(library_delay[0] if isinstance(library_delay,list) else library_delay)
