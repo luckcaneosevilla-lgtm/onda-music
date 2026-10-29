@@ -33,6 +33,19 @@ class Process:
     def kill(self):self.killed=True;self.out.put(None)
 
 class ResolverTests(unittest.TestCase):
+    def test_explicit_refresh_clears_negative_cache_and_is_bounded(self):
+        r=YtDlpResolver();vid='dQw4w9WgXcQ'
+        with patch.object(r,'run',side_effect=[AudioUnavailable('format_unavailable'),URL]) as run:
+            with self.assertRaisesRegex(AudioUnavailable,'format_unavailable'):r.resolve(vid)
+            with self.assertRaisesRegex(AudioUnavailable,'format_unavailable'):r.resolve(vid)
+            self.assertEqual(run.call_count,1)
+            self.assertTrue(r.refresh(vid))
+            self.assertEqual(r.resolve(vid)['url'],URL)
+            self.assertFalse(r.refresh(vid))
+            self.assertIn(vid,r.cache)
+            self.assertEqual(run.call_count,2)
+            self.assertGreater(r.compatible[vid],time.time())
+
     def test_worker_arguments_reuse_and_cache(self):
         r=YtDlpResolver(size=1);process=Process()
         with patch('audio_resolver.subprocess.Popen',return_value=process) as run:

@@ -316,6 +316,7 @@ class Handler(BaseHTTPRequestHandler):
             video_id=m[1]
             self.audio_video_id=video_id
             try:
+                if parse_qs(urlparse(self.path).query).get('refresh')==['1']:resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     item=resolver.resolve(video_id)
                     self.send(200,{'url':'/api/audio/'+video_id,'source':'yt-dlp','level':1,'mime':item['mime']});return

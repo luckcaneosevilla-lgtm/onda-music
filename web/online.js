@@ -335,7 +335,7 @@ function showTrack(item){
   nowPlayingArt(item);progress(0,item.duration||0);nowPlaying.track(item);drawQueue();
 }
 // A song that never reaches 'playing' is treated as failed instead of spinning forever.
-function armWatchdog(version,ms=15000){clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||!playbackWanted||$('#online-player').dataset.state!=='loading')return;resolutionBusy=false;retryAudioLevel(version)},ms)}
+function armWatchdog(version,ms=30000){clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||!playbackWanted||$('#online-player').dataset.state!=='loading')return;resolutionBusy=false;retryAudioLevel(version)},ms)}
 async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
   const item=audioQueue[audioIndex];if(!item)return;const {version,signal}=beginPlayback();resumeAt=resumeFrom;
   playbackWanted=autostart;
@@ -349,7 +349,7 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
     if(!result&&minimumLevel<=1&&cachedIds.has(item.id)){const local=await localAudio(item);if(version!==playVersion||!me){if(local)URL.revokeObjectURL(local);return}if(local)result={url:local,level:0,source:'device'}}
     // Level 1 plays in the same tick as the click (no await before play), so the gesture is kept;
     // the server starts relaying bytes as soon as yt-dlp returns the URL. Failures arrive via onerror.
-    if(!result&&item.provider==='piped'&&minimumLevel<=1)result={url:'/api/audio/'+item.provider_id,level:1,source:'yt-dlp'};
+    if(!result&&item.provider==='piped'&&minimumLevel<=1)result={url:'/api/audio/'+item.provider_id+(freshRetried.has(item.id)?'?refresh=1':''),level:1,source:'yt-dlp'};
     else if(!result){
       const format=onlineAudio.canPlayType('audio/mp4')?'mp4':'webm';
       result=await api('/api/online/play/'+encodeURIComponent(item.id).replace('%3A',':')+'?format='+format+(minimumLevel>=3?'&minimum_level=3':''),'GET',undefined,{signal});

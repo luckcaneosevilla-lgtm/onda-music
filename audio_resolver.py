@@ -35,6 +35,11 @@ class Quiet:
     def debug(self,m):pass
     info=warning=error=debug
 options=json.loads(sys.argv[1]);fast_options=copy.deepcopy(options)
+def reason(error):
+    text=str(error).lower()
+    for needle,code in [('not a bot','bot_check'),('sign in','sign_in_required'),('javascript runtime','javascript_required'),('requested format','format_unavailable'),('http error 403','upstream_403'),('timed out','network_timeout'),('not available','video_unavailable')]:
+        if needle in text:return code
+    return 'extract_failed'
 fast_options['extractor_args']['youtube']['player_skip']=['webpage','configs','initial_data']
 # Retry after YouTube refused a stream (datacenter IPs are often blocked for one client):
 # other player clients. tv/web_safari/mweb need a JS runtime (deno + yt-dlp-ejs, see Dockerfile).
@@ -44,7 +49,7 @@ fast=YoutubeDL(dict(fast_options,logger=Quiet()))
 alt=YoutubeDL(dict(alt_options,logger=Quiet()))
 print("ready",flush=True)
 for line in sys.stdin:
-    parts=line.strip().split();video_id=parts[0] if parts else '';url=None;engine='yt-dlp-fast'
+    parts=line.strip().split();video_id=parts[0] if parts else '';url=None;engine='yt-dlp-fast';failure='extract_failed'
     if re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
         # Off by default: with yt-dlp 2026.10.26 the skip-webpage extraction failed on every
         # tested song and only added ~0.1 s before the compatible path. IVOX_YTDLP_FAST=1 re-enables it.
@@ -54,9 +59,9 @@ for line in sys.stdin:
         if not url:
             for engine,client in ((('yt-dlp-alt',alt),('yt-dlp-compatible',ydl)) if len(parts)>1 else (('yt-dlp-compatible',ydl),)):
                 try:url=client.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
-                except Exception:pass
+                except Exception as error:failure=reason(error)
                 if url:break
-    print(json.dumps({"id":video_id,"url":url,"engine":engine}),flush=True)
+    print(json.dumps({"id":video_id,"url":url,"engine":engine,"error":failure if not url else None}),flush=True)
 '''
 
 class Worker:
@@ -81,6 +86,7 @@ class Worker:
         answer=json.loads(line)
         if answer.get('id')!=video_id:raise OSError('worker out of sync')
         self.last_engine=answer.get('engine','yt-dlp')
+        self.last_error=answer.get('error') or 'extract_failed'
         return answer.get('url')
     def kill(self):
         try:self.process.kill()
@@ -94,7 +100,7 @@ class Worker:
 
 class YtDlpResolver:
     def __init__(self,size=3,recycle=150):
-        self.cache={};self.failures={};self.guard=threading.Lock();self.store=None
+        self.cache={};self.failures={};self.failure_reasons={};self.refreshes={};self.guard=threading.Lock();self.store=None
         self.locks={}
         # Plays always find a worker: prefetching uses at most size-1 of them.
         self.size=size;self.recycle=recycle;self.timeout=15;self.idle=[];self.count=0;self.available=threading.Condition(self.guard)
@@ -186,6 +192,7 @@ class YtDlpResolver:
             raise AudioUnavailable() from None
         self.release(worker)
         metric('audio_resolve',video_id=video_id,engine=getattr(worker,'last_engine','yt-dlp'),background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=bool(url))
+        if not url:raise AudioUnavailable(getattr(worker,'last_error','extract_failed'))
         return url
     def prefetch(self,video_id):self.prefetch_many([video_id])
     def prefetch_many(self,ids):
@@ -253,7 +260,7 @@ class YtDlpResolver:
             if cached and cached['expires']>time.time()+(600 if background else 0):
                 if not background and cached['expires']<time.time()+300:self.prefetch(video_id)
                 return cached
-            if failed:raise AudioUnavailable()
+            if failed:raise AudioUnavailable(self.failure_reasons.get(video_id,'recent_extraction_failure'))
             if not background:
                 with self.guard:self.playing+=1
             try:
@@ -273,13 +280,15 @@ class YtDlpResolver:
                 self.save('INSERT OR REPLACE INTO audio_url_cache VALUES(?,?,?,?)',(video_id,url,mime,expiry))
                 if self.shared:self.shared.enqueue(video_id,item)
                 return item
-            except AudioUnavailable:
+            except AudioUnavailable as error:
                 # A busy pool is not the song's fault: only real extraction failures are remembered.
                 if not background:
                     with self.guard:
                         self.failures={k:v for k,v in self.failures.items() if v>time.time()}
                         if len(self.failures)>=200:self.failures.pop(next(iter(self.failures)))
                         self.failures[video_id]=time.time()+30
+                        self.failure_reasons={k:v for k,v in self.failure_reasons.items() if k in self.failures}
+                        self.failure_reasons[video_id]=str(error) or 'extract_failed'
                 raise
             finally:
                 if not background:
@@ -294,6 +303,18 @@ class YtDlpResolver:
         self.prefixes.remove(video_id)
         self.save('DELETE FROM audio_url_cache WHERE video_id=?',(video_id,))
         if self.shared:self.shared.enqueue(video_id,None)
+    def refresh(self,video_id):
+        """One explicit fresh attempt per video/30 s, shared by concurrent listeners."""
+        with self.guard:
+            stamp=time.time()
+            self.refreshes={k:v for k,v in self.refreshes.items() if v>stamp}
+            if self.refreshes.get(video_id,0)>stamp:return False
+            if len(self.refreshes)>=300:self.refreshes.pop(next(iter(self.refreshes)))
+            self.refreshes[video_id]=stamp+30
+            self.failures.pop(video_id,None);self.failure_reasons.pop(video_id,None)
+            self.compatible[video_id]=stamp+600
+        self.invalidate(video_id)
+        return True
     def prefetch_fragment(self,video_id):
         started=time.perf_counter();item=self.resolve(video_id,background=True)
         if self.prefixes.get(video_id,item['url']):return
