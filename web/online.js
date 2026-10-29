@@ -468,7 +468,7 @@ function recoverCurrent(){
   onlineAudio.play().catch(e=>{if(version!==playVersion||!playbackWanted||e.name==='AbortError')return;if(e.name==='NotAllowedError'){pausePlayback();playerState('paused');$('#playback-status').textContent='Pulsa ▶ para continuar.'}else retryAudioLevel(version)});
   armWatchdog(version,8000);return true;
 }
-onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).catch(()=>{})}};
+onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).then(r=>{if(r?.duration>0&&!(current.duration>0))current.duration=r.duration}).catch(()=>{})}};
 // The last seconds of a song. Safari can stop there without 'ended' (a failed last range
 // request of the stream, or a catalogue length a little longer than the audio): that is the end.
 const nearTrackEnd=(margin=3)=>{const total=trackDuration();return total>0&&lastPlaybackTime>.25&&total-onlineAudio.currentTime<margin};
@@ -536,6 +536,10 @@ onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=
   if(onlineAudio.readyState>=2)lastPlaybackTime=onlineAudio.currentTime;
   // 30 s before the end the next song is resolved (and the radio fetched) so it starts at once.
   if(!nearEnd&&total>0&&total-onlineAudio.currentTime<30&&!onlineAudio.paused){nearEnd=true;prefetchedReset(audioQueue[audioIndex+1]);prefetchNext();ensureRadio()}
+  // Safari can report a stream far longer than the song (HE-AAC at twice its length): past
+  // the catalogue length only silence is left, so the next song starts.
+  const known=audioQueue[audioIndex]?.duration,raw=onlineAudio.duration;
+  if(known>0&&playbackWanted&&!onlineAudio.paused&&(Number.isFinite(raw)?raw>known*1.4&&onlineAudio.currentTime>known+2:onlineAudio.currentTime>known+5))onlineAudio.onended();
 };
 ['#online-player .player-heading','#online-player .np-art'].forEach(s=>$(s).onclick=()=>nowPlaying.open());
 $('#np-expand').onclick=()=>nowPlaying.open();

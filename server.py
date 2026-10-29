@@ -468,7 +468,8 @@ class Handler(BaseHTTPRequestHandler):
                 if key in b:c.execute('UPDATE online_saves SET '+key+'=? WHERE user_id=? AND video_id=?',(int(b[key]),uid,vid))
             if b.get('played'): c.execute('UPDATE online_saves SET last_played=? WHERE user_id=? AND video_id=?',(now(),uid,vid))
             c.execute('DELETE FROM online_saves WHERE user_id=? AND favorite=0 AND later=0 AND last_played IS NULL',(uid,))
-            c.commit();self.send(200,{});return
+            # The real length lets the player stop at the song's end when it had no catalogue length.
+            c.commit();self.send(200,{'duration':resolver.duration(vid.split(':',1)[1])} if b.get('played') and vid.startswith('piped:') else {});return
         m=re.fullmatch(r'/api/online/playlists/([a-f0-9]{32})/items',path)
         if m and method in ('POST','DELETE'):
             require(c.execute('SELECT 1 FROM playlists WHERE id=? AND user_id=?',(m[1],uid)).fetchone(),'Playlist no encontrada.',404)

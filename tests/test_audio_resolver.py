@@ -40,7 +40,7 @@ class ResolverTests(unittest.TestCase):
             # One warm process serves every song; the cache answers repeats without asking it.
             self.assertEqual(run.call_count,1);self.assertEqual(process.inputs,['dQw4w9WgXcQ','kJQP7kiw5Fk'])
             args=run.call_args.args[0];options=json.loads(args[-1])
-            self.assertEqual(options['format'],'bestaudio[ext=m4a]/bestaudio');self.assertEqual(options['extractor_args'],OPTIONS['extractor_args']);self.assertTrue(options['noplaylist'])
+            self.assertEqual(options['format'],'bestaudio[acodec^=mp4a.40.2]/bestaudio[ext=m4a]/bestaudio');self.assertEqual(options['extractor_args'],OPTIONS['extractor_args']);self.assertTrue(options['noplaylist'])
             self.assertNotIn('shell',run.call_args.kwargs);self.assertNotIn('dQw4w9WgXcQ',' '.join(args))
             self.assertGreater(r.cache['dQw4w9WgXcQ']['expires'],time.time()+1790)
             r.cache['dQw4w9WgXcQ']['expires']=0;r.resolve('dQw4w9WgXcQ');self.assertEqual(process.inputs[-1],'dQw4w9WgXcQ')

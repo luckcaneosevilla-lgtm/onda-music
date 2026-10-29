@@ -23,7 +23,9 @@ from audio_cache import SharedAudioCache
 class AudioUnavailable(Exception):pass
 
 # m4a first: Safari/iOS plays AAC everywhere; HLS/DASH manifests are never used and cost ~0.4 s.
-OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[ext=m4a]/bestaudio','noplaylist':True,'cachedir':False,'extractor_args':{'youtube':{'skip':['hls','dash']}}}
+# Plain AAC-LC (itag 140) before any other m4a: Safari reports HE-AAC (139, mp4a.40.5) at
+# about twice its length, so the song ends and minutes of silence follow.
+OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[acodec^=mp4a.40.2]/bestaudio[ext=m4a]/bestaudio','noplaylist':True,'cachedir':False,'extractor_args':{'youtube':{'skip':['hls','dash']}}}
 # A worker imports yt-dlp once and keeps one YoutubeDL alive: the player JS and
 # signature functions stay in memory, so each new song costs ~1 s instead of a
 # fresh ~2.7 s process. One video id per stdin line, one JSON line back.
@@ -104,14 +106,14 @@ class YtDlpResolver:
         except sqlite3.Error:self.store=None;rows=[]
         with self.guard:
             for video_id,url,mime,expires in reversed(rows):
-                if self.allowed(url):self.cache[video_id]={'url':url,'mime':mime,'expires':expires}
+                if self.reusable(url):self.cache[video_id]={'url':url,'mime':mime,'expires':expires}
         if self.shared:self.shared.close();self.shared=None
         if cloud_factory:
             self.shared=SharedAudioCache(cloud_factory,scope or socket.gethostname(),self.merge_shared)
     def merge_shared(self,rows):
         with self.guard:
             for video_id,url,mime,expires in rows:
-                if not self.allowed(url) or not mime.startswith('audio/') or expires<=time.time()+120:continue
+                if not self.reusable(url) or not mime.startswith('audio/') or expires<=time.time()+120:continue
                 current=self.cache.get(video_id)
                 if not current or current['expires']<expires:self.cache[video_id]={'url':url,'mime':mime,'expires':expires}
             while len(self.cache)>300:self.cache.pop(next(iter(self.cache)))
@@ -208,6 +210,16 @@ class YtDlpResolver:
                 with self.guard:
                     if retries.get(video_id,0)<2 and video_id not in self.failures and video_id not in self.cache:
                         retries[video_id]=retries.get(video_id,0)+1;self.pending.append(video_id)
+    def duration(self,video_id):
+        # The resolved stream URL carries the audio's real length ('dur', in seconds).
+        with self.guard:hit=self.cache.get(video_id)
+        try:value=float(parse_qs(urlparse(hit['url']).query)['dur'][0]) if hit else 0
+        except (KeyError,ValueError,IndexError):value=0
+        return round(value,1) if 0<value<6*3600 else None
+    @staticmethod
+    def reusable(url):
+        # URLs saved before AAC-LC was preferred may point at HE-AAC (itag 139): resolve again.
+        return YtDlpResolver.allowed(url) and parse_qs(urlparse(url).query).get('itag',[''])[0]!='139'
     @staticmethod
     def allowed(url):
         try:
