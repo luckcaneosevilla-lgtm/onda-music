@@ -409,8 +409,10 @@ function skipTo(index){
 const skipBy=delta=>skipTo(audioIndex+delta);
 function nextTrack(){if(audioIndex<audioQueue.length-1)return skipBy(1);notify('Buscando canciones similares…');ensureRadio(true).then(added=>{if(added)skipBy(1);else notify('No hay más canciones en la cola.')})}
 // Autoplay radio: when the queue is about to run out, similar songs are appended.
-// Seeds go from the most recent songs back; one that adds nothing new is not asked again.
-// If the catalogue has nothing, the listener's own favourites and history keep it going.
+// Seeds go from the most recent songs back; one that adds nothing new is not asked again
+// (a failed request may be retried). Without a radio (Audius, own files, catalogue down)
+// songs by the same artist follow, then the listener's own favourites and history.
+const radioArtist=v=>v.provider==='local'?(v.title.includes(' - ')?v.title.split(' - ')[0].trim():''):mainArtist(v).replace(/ - Topic$/,'');
 async function ensureRadio(force=false){
   if(!autoplay||!audioQueue.length)return false;
   if(!force&&audioIndex<audioQueue.length-2)return false;
@@ -423,7 +425,12 @@ async function ensureRadio(force=false){
     const ordered=[audioQueue.at(-1),audioQueue[audioIndex],...seeds].filter((v,i,a)=>v&&seeds.includes(v)&&a.indexOf(v)===i).slice(0,3);
     for(const seed of ordered){
       radioTried.add(seed.id);
-      try{const r=await api('/api/online/radio/'+seed.id);if(queue!==audioQueue)return false;if(append(r.items))return true}catch{if(queue!==audioQueue)return false}
+      try{const r=await api('/api/online/radio/'+seed.id);if(queue!==audioQueue)return false;if(append(r.items))return true}catch{radioTried.delete(seed.id);if(queue!==audioQueue)return false}
+    }
+    const artists=[...new Set([audioQueue[audioIndex],audioQueue.at(-1)].filter(Boolean).map(radioArtist))].filter(n=>n.length>=2&&!radioTried.has('artist:'+n.toLowerCase()));
+    for(const name of artists){
+      radioTried.add('artist:'+name.toLowerCase());
+      try{const r=await api('/api/online/search?q='+encodeURIComponent(name.slice(0,120)));if(queue!==audioQueue)return false;if(append(r.items))return true}catch{radioTried.delete('artist:'+name.toLowerCase());if(queue!==audioQueue)return false}
     }
     if(queue!==audioQueue)return false;
     return append(onlineData.saves.map(x=>onlineData.items[x.video_id]).filter(v=>v&&v.provider!=='local').sort(()=>Math.random()-.5));
@@ -468,7 +475,9 @@ onlineAudio.onended=async()=>{
   if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav')return;const version=playVersion;
   clearStall();clearTimeout(watchdog);
   if(audioIndex<audioQueue.length-1){advance();return}
-  playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';const added=await ensureRadio(true);
+  playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';let added=await ensureRadio(true);
+  // One more try after a moment: a request that just failed (network, rate limit) may answer now.
+  if(!added&&version===playVersion){await new Promise(r=>setTimeout(r,3000));if(version===playVersion)added=await ensureRadio(true)}
   if(version!==playVersion)return;
   if(added&&audioIndex<audioQueue.length-1)advance();else{playbackWanted=false;queueFinished=true;playerState('paused');$('#playback-status').textContent='Fin de la cola. Añade una canción y sonará al momento.'}
 };
