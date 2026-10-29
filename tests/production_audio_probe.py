@@ -44,7 +44,9 @@ def browser_probe(tracks):
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         browser=p.chromium.launch(env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'})
-        context=browser.new_context(viewport={'width':390,'height':844})
+        options={'viewport':{'width':390,'height':844}}
+        if '--iphone-path' in sys.argv:options.update(user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',has_touch=True,is_mobile=True)
+        context=browser.new_context(**options)
         context.add_cookies([{'name':c.name,'value':c.value,'domain':c.domain,'path':c.path,
                              'secure':c.secure,'httpOnly':True,'sameSite':'Strict'} for c in jar])
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
@@ -69,6 +71,8 @@ def browser_probe(tracks):
             print(json.dumps({'browser_failure':detail},ensure_ascii=True),flush=True)
             browser.close();raise
         first=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,playing_ms:startMs,state:document.querySelector("#online-player").dataset.state})')
+        if '--iphone-path' in sys.argv:
+            page.evaluate("() => {Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))}")
         # Seek to the real ending so the deployed media element must emit ended
         # and advance itself, without clicking Next or synthesizing that event.
         page.evaluate('() => {onlineAudio.currentTime=trackDuration()-1.5}')

@@ -2,6 +2,8 @@
 // only one: online songs, device copies and imported files all play through it.
 // Seek bar, buffer and volume belong to player-controls.js (IVoxPlayerControls).
 const onlineAudio=$('#online-audio');
+function prepareAudioSession(){try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch{}}
+prepareAudioSession();
 let onlineData={saves:[],playlists:[],items:{},recent:[]},onlineStatus;
 let searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};
 let searchController,searchVersion=0,onlineSection='favorites',artistView=null;
@@ -322,6 +324,7 @@ function drawOnlineLibrary(){
 // Every start aborts the previous playback's requests and timers; late answers
 // and media events from an older version are ignored.
 function beginPlayback(){
+  onlineAudio.autoplay=false;
   transitionIntent++;
   if(radioQueue&&radioQueue!==audioQueue){radioController?.abort();radioPromise=null;radioQueue=null}
   playController?.abort();playController=new AbortController();window.IVoxPlayerControls.cancelSeek();
@@ -337,6 +340,7 @@ function showTrack(item){
 // A song that never reaches 'playing' is treated as failed instead of spinning forever.
 function armWatchdog(version,ms=30000){clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||!playbackWanted||$('#online-player').dataset.state!=='loading')return;resolutionBusy=false;retryAudioLevel(version)},ms)}
 async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
+  prepareAudioSession();
   const item=audioQueue[audioIndex];if(!item)return;const {version,signal}=beginPlayback();resumeAt=resumeFrom;
   playbackWanted=autostart;
   resolutionBusy=true;activeLevel=0;recordedReference=null;
@@ -358,7 +362,7 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
     activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped'}[result.source]||'Audius';
     if(blobUrl&&result.url!==blobUrl&&blobUrl!==window.crossfadeHold)URL.revokeObjectURL(blobUrl);
     blobUrl=result.source==='device'?result.url:null;
-    onlineAudio.src=result.url;resolutionBusy=false;
+    onlineAudio.autoplay=autostart;onlineAudio.src=result.url;resolutionBusy=false;
     if(!autostart){clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
     try{await onlineAudio.play()}catch(e){if(version!==playVersion||e.name==='AbortError')return;if(e.name==='NotAllowedError'){playbackWanted=false;clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel(version)}
   }catch(e){if(version!==playVersion||e.name==='AbortError'||!me)return;resolutionBusy=false;retryAudioLevel(version)}
@@ -406,7 +410,9 @@ async function playbackFailure(message){
 function skipTo(index){
   if(index<0||index>=audioQueue.length)return;
   audioIndex=index;failStreak=0;
-  if(!audioUnlocked){startOnline();return}
+  // Lock-screen controls must keep the native media callback; iOS can suspend
+  // the debounce timer as soon as that callback returns.
+  if(!audioUnlocked||document.hidden){startOnline();return}
   beginPlayback();onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();
   showTrack(audioQueue[index]);playerState('loading');$('#playback-status').textContent='Preparando audio…';
   skipTimer=setTimeout(()=>{skipTimer=null;startOnline()},200);
@@ -436,7 +442,7 @@ async function ensureRadio(force=false){
   radioController=controller;radioQueue=queue;
   // A slow recommendation service must not block the end of a song indefinitely.
   const timeout=setTimeout(()=>controller.abort(),8000);
-  const append=items=>{if(queue!==audioQueue||!autoplay)return false;const have=new Set(audioQueue.map(v=>v.id)),fresh=(items||[]).filter(v=>v&&v.available!==false&&!have.has(v.id)&&!failedReferences.has(v.id)&&have.add(v.id)).slice(0,10).map(v=>({...v,radio:true}));if(!fresh.length)return false;audioQueue.push(...fresh);drawQueue();nowPlaying.radioAdded(fresh.length);if(audioIndex>=audioQueue.length-fresh.length-1&&nearEnd)prefetchNext();return true};
+  const append=items=>{if(queue!==audioQueue||!autoplay)return false;const have=new Set(audioQueue.map(v=>v.id)),fresh=(items||[]).filter(v=>v&&v.available!==false&&!have.has(v.id)&&!failedReferences.has(v.id)&&have.add(v.id)).slice(0,10).map(v=>({...v,radio:true}));if(!fresh.length)return false;audioQueue.push(...fresh);drawQueue();nowPlaying.radioAdded(fresh.length);if(!resumePendingEnd())prefetchNext();return true};
   const task=(async()=>{
     const seeds=[...new Map([...audioQueue.slice(0,audioIndex+1).reverse(),...audioQueue.slice(audioIndex+1).reverse()].filter(v=>v.provider==='piped'&&!failedReferences.has(v.id)&&!radioTried.has(v.id)).map(v=>[v.id,v])).values()];
     // Prefer the last song in the queue, then what is playing now.
@@ -469,14 +475,14 @@ function enqueue(items,next=false){
   const radio=audioQueue.findIndex((x,i)=>i>audioIndex&&x.radio),at=next?audioIndex+1:radio<0?audioQueue.length:radio;
   audioQueue.splice(at,0,...items);
   if(queueFinished||$('#online-player').dataset.state==='error'||$('#online-player').hidden){audioIndex=at;failStreak=0;startOnline();return true}
-  drawQueue();prefetchNext();return false;
+  drawQueue();if(resumePendingEnd())return true;prefetchNext();return false;
 }
 function startRadio(v){audioQueue=[v];audioIndex=0;failedReferences.clear();radioTried.clear();freshRetried.clear();failStreak=0;startOnline();ensureRadio(true).then(added=>{if(added&&audioQueue[0]?.id===v.id)notify('Radio de «'+v.title+'»: canciones similares en la cola.')})}
 function setAutoplay(on){autoplay=on;try{localStorage.setItem('ivox-autoplay',on?'1':'0')}catch{}if(on)ensureRadio();else radioController?.abort();drawQueue();nowPlaying.state($('#online-player').dataset.state)}
 window.playLocal=(items,index)=>playList(items,index);
 
 function clearStall(){clearTimeout(stallTimer);stallTimer=null;}
-function pausePlayback(){transitionIntent++;playbackWanted=false;recoveryInFlight=false;clearStall();clearTimeout(watchdog);onlineAudio.pause();if(audioQueue[audioIndex])playerState('paused');}
+function pausePlayback(){transitionIntent++;onlineAudio.autoplay=false;playbackWanted=false;recoveryInFlight=false;clearStall();clearTimeout(watchdog);onlineAudio.pause();if(audioQueue[audioIndex])playerState('paused');}
 function recoverCurrent(){
   const src=onlineAudio.getAttribute('src');
   if(recoveryInFlight)return playbackWanted;
@@ -488,15 +494,29 @@ function recoverCurrent(){
   onlineAudio.play().catch(e=>{if(version!==playVersion||!playbackWanted||e.name==='AbortError')return;if(e.name==='NotAllowedError'){pausePlayback();playerState('paused');$('#playback-status').textContent='Pulsa ▶ para continuar.'}else retryAudioLevel(version)});
   armWatchdog(version,8000);return true;
 }
-onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).then(r=>{if(r?.duration>0&&!(current.duration>0))current.duration=r.duration}).catch(()=>{})}};
+onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).then(r=>{if(version===playVersion&&r?.duration>0){current.duration=r.duration;progress(onlineAudio.currentTime,trackDuration())}}).catch(()=>{})}};
 // The last seconds of a song. Safari can stop there without 'ended' (a failed last range
 // request of the stream, or a catalogue length a little longer than the audio): that is the end.
 const nearTrackEnd=(margin=3)=>{const total=trackDuration();return total>0&&lastPlaybackTime>.25&&total-onlineAudio.currentTime<margin};
-let endedVersion=-1;
+let endedVersion=-1,endedIntent=-1;
+// Do not leave a ready next song behind a suspended radio promise/timer.
+function resumePendingEnd(){
+  if(endedVersion!==playVersion||endedIntent!==transitionIntent||!playbackWanted||audioIndex>=audioQueue.length-1)return false;
+  advance();return true;
+}
+function nativeTrackEnded(){
+  const raw=onlineAudio.duration,t=onlineAudio.currentTime;
+  return onlineAudio.ended||nearTrackEnd()||(!onlineAudio.seeking&&Number.isFinite(raw)&&raw>0&&lastPlaybackTime>.25&&raw-t<.75);
+}
 onlineAudio.onerror=()=>{const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(nearTrackEnd()){onlineAudio.onended();return}if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
 onlineAudio.addEventListener('playing',()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav'){recoveryInFlight=false;endedVersion=-1}});
-onlineAudio.onended=async()=>{
-  if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav'||endedVersion===playVersion)return;const version=playVersion,intent=transitionIntent;endedVersion=version;
+onlineAudio.onended=async event=>{
+  // Assigning the next src in pause-at-EOF can precede the old source's queued
+  // ended event. That stale event must not finish the new song at second zero.
+  if(event?.type==='ended'&&!onlineAudio.ended&&onlineAudio.currentTime<.25)return;
+  if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav')return;
+  if(endedVersion===playVersion){resumePendingEnd();return}
+  const version=playVersion,intent=transitionIntent;endedVersion=version;endedIntent=intent;
   clearStall();clearTimeout(watchdog);
   if(audioIndex<audioQueue.length-1){advance();return}
   playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';let added=await ensureRadio(true);
@@ -511,9 +531,32 @@ function advance(){
   if(!audioQueue[audioIndex]?.radio&&audioQueue[audioIndex+1]?.radio)notify('Tu cola terminó: seguimos con recomendaciones similares.');
   audioIndex++;startOnline();
 }
-// The listener's pause clears playbackWanted first; a pause the browser makes by itself in
-// the last seconds is the song ending ('ended' follows, or the timer stands in for it).
-onlineAudio.onpause=()=>{if(playbackWanted&&nearTrackEnd()&&!fixingDuration){const version=playVersion;setTimeout(()=>{if(version===playVersion&&playbackWanted&&onlineAudio.paused)onlineAudio.onended()},1500);return}if(!fixingDuration&&!resolutionBusy&&!onlineAudio.error&&onlineAudio.getAttribute('src')&&onlineAudio.getAttribute('src')!=='/silence.wav'&&!['loading','error'].includes($('#online-player').dataset.state)){playbackWanted=false;clearStall();clearTimeout(watchdog);playerState('paused')}};
+// Explicit Pause clears playbackWanted first. A native pause at EOF instead
+// chains synchronously, even when background JavaScript timers cannot run.
+onlineAudio.onpause=()=>{
+  const src=onlineAudio.getAttribute('src');
+  if(fixingDuration||resolutionBusy||!src||src==='/silence.wav')return;
+  // iOS may suspend timers immediately after pausing at EOF. Chain the source
+  // synchronously while the native media callback still has background access.
+  if(playbackWanted&&nativeTrackEnded()){onlineAudio.onended();return}
+  if(document.hidden&&playbackWanted){clearStall();playerState('paused');return}
+  if(!onlineAudio.error&&!['loading','error'].includes($('#online-player').dataset.state)){playbackWanted=false;clearStall();clearTimeout(watchdog);playerState('paused')}
+};
+function restoreOnlinePlayback(){
+  if(document.hidden||!me||!playbackWanted||!audioQueue[audioIndex])return;
+  if(onlineAudio.ended||(onlineAudio.paused&&nativeTrackEnded())){
+    if(!resumePendingEnd()){endedVersion=-1;onlineAudio.onended()}return;
+  }
+  if(onlineAudio.paused&&onlineAudio.getAttribute('src')){
+    onlineAudio.autoplay=true;
+    onlineAudio.play().catch(e=>{if(e.name==='NotAllowedError'){pausePlayback();$('#playback-status').textContent='Pulsa ▶ para continuar.'}else if(e.name!=='AbortError')retryAudioLevel()});
+  }
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden&&playbackWanted){prepareAudioSession();ensureRadio();prefetchNext()}
+  else restoreOnlinePlayback();
+});
+window.addEventListener('pageshow',restoreOnlinePlayback);
 // Do not replace the startup watchdog or postpone reconnection on every waiting event.
 onlineAudio.onwaiting=()=>{
   if(!playbackWanted||onlineAudio.paused||fixingDuration)return;
@@ -567,6 +610,11 @@ onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=
 $('#np-expand').onclick=()=>nowPlaying.open();
 function toggleOnline(){
   if(!audioQueue[audioIndex])return;
+  if(onlineAudio.ended){
+    if(audioIndex<audioQueue.length-1)skipBy(1);
+    else{playbackWanted=true;endedVersion=-1;onlineAudio.onended()}
+    return;
+  }
   const source=onlineAudio.getAttribute('src');
   if(!source||source==='/silence.wav'||failedReferences.has(audioQueue[audioIndex].id)){failedReferences.delete(audioQueue[audioIndex].id);failStreak=0;startOnline();return}
   // paused becomes false as soon as play() is requested, before any audio is

@@ -35,7 +35,7 @@ try:
   auth=browser.new_context()
   auth.request.post(base+'/api/register',data={'name':'Playback tests','email':'playback@example.test','password':'isolated-playback-tests'})
   state=auth.storage_state();auth.close()
-  for mode in ['first-tap','repeat-loading','sheet-first-tap','sheet-repeat-loading','sheet-seek','unlock-in-flight','async-source','legacy-cache','safari-duration','recover-network','stall-reconnect','pause-stall','switch-stall','no-copy-download']:
+  for mode in ['first-tap','repeat-loading','sheet-first-tap','sheet-repeat-loading','sheet-seek','unlock-in-flight','async-source','legacy-cache','safari-duration','stream-duration-correction','recover-network','stall-reconnect','pause-stall','switch-stall','no-copy-download']:
    print('Checking '+mode,flush=True)
    options={'viewport':{'width':390,'height':844},'is_mobile':True,'has_touch':True,'storage_state':state}
    if mode=='safari-duration':options['user_agent']='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1'
@@ -44,6 +44,7 @@ try:
    def tracked_media(route):media_requests.append(route.request.url);media(route)
    context.route('**/api/audio/testVideo*',tracked_media)
    context.route('**/fixture-audio',media)
+   if mode=='stream-duration-correction':context.route('**/api/online/items/**',lambda r:r.fulfill(json={'duration':60}))
    if mode=='async-source':
     def delayed_source(route):
      time.sleep(.15);route.fulfill(json={'url':'/fixture-audio','source':'audius','level':4})
@@ -77,6 +78,8 @@ try:
    assert not result['paused'] and result['time']<3 and not result['fixing'],(mode,result)
    assert result['source']!='/silence.wav'
    assert not errors,errors
+   if mode=='stream-duration-correction':
+    page.wait_for_function('() => audioQueue[audioIndex].duration===60 && trackDuration()===60')
    if mode=='sheet-seek':
     page.evaluate("""() => {
      const r=document.querySelector('#sheet-range');r.value=800;r.dispatchEvent(new Event('input'));progress(1,10);
