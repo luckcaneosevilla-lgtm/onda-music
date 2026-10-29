@@ -32,7 +32,7 @@ def probe(item):
     req=urllib.request.Request(origin+'/api/audio/'+item['provider_id'],headers={'Range':'bytes=0-32767'})
     try:
         with client.open(req,timeout=45) as response:
-            result.update(status=response.status,mime=response.headers.get('Content-Type'),bytes=len(response.read(32768)))
+            result.update(status=response.status,mime=response.headers.get('Content-Type'),server_timing=response.headers.get('Server-Timing'),cache=response.headers.get('X-IVOX-Audio-Cache'),bytes=len(response.read(32768)))
     except urllib.error.HTTPError as error:
         result.update(status=error.code,error=error.read(2048).decode(errors='replace'))
     except Exception as error:result.update(error=type(error).__name__)
@@ -51,14 +51,24 @@ def browser_probe(tracks):
         page.goto(origin)
         page.wait_for_function('() => me && typeof playList === "function"')
         page.evaluate("items => {setAutoplay(false);audioQueue=items;audioIndex=0;document.querySelector('#online-player').hidden=false}",tracks[:2])
+        page.evaluate("""() => {
+          window.tapAt=0;window.nextAt=0;window.startMs=null;window.nextMs=null;
+          document.querySelector('#np-toggle').addEventListener('click',()=>{tapAt=performance.now()},{once:true});
+          onlineAudio.addEventListener('ended',()=>{nextAt=performance.now()});
+          onlineAudio.addEventListener('playing',()=>{
+            if(onlineAudio.getAttribute('src')==='/silence.wav')return;
+            if(audioIndex===0&&startMs===null)startMs=performance.now()-tapAt;
+            if(audioIndex===1&&nextMs===null&&nextAt)nextMs=performance.now()-nextAt;
+          });
+        }""")
         page.locator('#np-toggle').click()
         page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>8 && onlineAudio.readyState>=2',timeout=45000)
-        first=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,state:document.querySelector("#online-player").dataset.state})')
+        first=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,playing_ms:startMs,state:document.querySelector("#online-player").dataset.state})')
         # Seek to the real ending so the deployed media element must emit ended
         # and advance itself, without clicking Next or synthesizing that event.
         page.evaluate('() => {onlineAudio.currentTime=trackDuration()-1.5}')
         page.wait_for_function('() => audioIndex===1 && !onlineAudio.paused && onlineAudio.currentTime>8 && onlineAudio.readyState>=2',timeout=45000)
-        second=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,state:document.querySelector("#online-player").dataset.state})')
+        second=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,transition_ms:nextMs,state:document.querySelector("#online-player").dataset.state})')
         page.evaluate('stopOnline()');browser.close()
     result={'first':first,'automatic_next':second,'page_errors':errors}
     assert not errors,errors
@@ -73,12 +83,16 @@ def main():
     out=Path(__file__).resolve().parents[1]/'test-results';out.mkdir(exist_ok=True)
     runs=[]
     while True:
+        if '--browser-first' in sys.argv:
+            result=browser_probe(tracks)
+            (out/'production-browser-latency.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+            print(json.dumps(result),flush=True)
         # Match one listener's playback rather than creating an extraction burst.
         results=[probe(item) for item in tracks]
         runs.append(results)
         (out/'production-audio-probe.json').write_text(json.dumps(runs,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(results,ensure_ascii=True),flush=True)
-        if '--browser' in sys.argv and all(r.get('status') in (200,206) for r in results):
+        if '--browser' in sys.argv and '--browser-first' not in sys.argv and all(r.get('status') in (200,206) for r in results):
             result=browser_probe(tracks)
             (out/'production-browser-audio.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
             print(json.dumps(result),flush=True)

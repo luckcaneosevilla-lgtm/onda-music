@@ -1,12 +1,15 @@
 import json
 import queue
+import os
+import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
 import time
 import unittest
 from unittest.mock import patch
-from audio_resolver import YtDlpResolver,AudioUnavailable,OPTIONS
+from audio_resolver import YtDlpResolver,AudioUnavailable,OPTIONS,WORKER
 
 URL='https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4'
 class Process:
@@ -33,6 +36,26 @@ class Process:
     def kill(self):self.killed=True;self.out.put(None)
 
 class ResolverTests(unittest.TestCase):
+    def test_lightweight_extraction_keeps_both_compatible_fallbacks(self):
+        fake='''import os
+class YoutubeDL:
+    def __init__(self,options):self.options=options
+    def extract_info(self,url,download=False):
+        clients=self.options['extractor_args']['youtube'].get('player_client')
+        if clients==['visionos'] and os.environ.get('FAIL_DIRECT')=='1':raise Exception('direct unavailable')
+        return {'url':'https://r1.googlevideo.com/audio?mime=audio%2Fmp4'}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory)/'yt_dlp.py').write_text(fake,encoding='utf-8')
+            for failed,line,engine in [(False,'dQw4w9WgXcQ','yt-dlp-direct'),(True,'dQw4w9WgXcQ','yt-dlp-compatible'),(False,'dQw4w9WgXcQ compatible','yt-dlp-alt')]:
+                env={k:v for k,v in os.environ.items() if k not in ('SSLKEYLOGFILE','IVOX_YTDLP_FAST')}
+                env.update(PYTHONPATH=directory,FAIL_DIRECT='1' if failed else '0')
+                result=subprocess.run([sys.executable,'-c',WORKER,json.dumps(OPTIONS)],input=line+'\n',capture_output=True,text=True,env=env,timeout=5,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                self.assertEqual(result.returncode,0,result.stderr)
+                answer=json.loads(result.stdout.splitlines()[1])
+                self.assertEqual(answer['engine'],engine)
+                self.assertTrue(answer['url'])
+
     def test_busy_pool_is_not_remembered_as_an_unplayable_song(self):
         r=YtDlpResolver()
         with patch.object(r,'run',side_effect=[AudioUnavailable('worker_unavailable'),URL]) as run:
@@ -42,12 +65,22 @@ class ResolverTests(unittest.TestCase):
             self.assertEqual(r.playing,0)
             self.assertEqual(run.call_count,2)
 
-    def test_small_pool_reserves_extraction_for_actual_play(self):
+    def test_small_pool_prepares_but_play_preempts_another_song(self):
         r=YtDlpResolver(size=1)
-        with patch.object(r,'spawn') as spawn:
+        old=Process(hang=True);fresh=Process()
+        with patch('audio_resolver.subprocess.Popen',side_effect=[old,fresh]),patch.object(r,'prefetch_fragment',side_effect=lambda vid:r.resolve(vid,background=True)):
             r.prefetch_many(['dQw4w9WgXcQ'])
-            spawn.assert_not_called()
-            self.assertEqual(list(r.pending),[])
+            deadline=time.monotonic()+2
+            while not r.background_jobs and time.monotonic()<deadline:time.sleep(.01)
+            self.assertIn('dQw4w9WgXcQ',r.background_jobs)
+            started=time.monotonic()
+            self.assertEqual(r.resolve('kJQP7kiw5Fk')['url'],URL)
+            self.assertLess(time.monotonic()-started,.5)
+            self.assertTrue(old.killed)
+            deadline=time.monotonic()+2
+            while r.prefetchers and time.monotonic()<deadline:time.sleep(.01)
+            self.assertEqual(r.prefetchers,0)
+            self.assertEqual(r.playing,0)
 
     def test_explicit_refresh_clears_negative_cache_and_is_bounded(self):
         r=YtDlpResolver();vid='dQw4w9WgXcQ'
