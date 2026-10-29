@@ -9,7 +9,7 @@ let audioQueue=[],audioIndex=-1,playVersion=0,recordedReference=null,advanceTime
 // One controller per playback: changing song aborts every request of the previous one.
 let playController=null,skipTimer=null,watchdog,failStreak=0,audioUnlocked=false,resumeAt=0,fixingDuration=false;
 let playbackWanted=false,stallTimer=null,recoveryAttempts=0,lastPlaybackTime=0,recoveryInFlight=false;
-let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),radioPromise=null,queueFinished=false,nearEnd=false,loadingSince=0;
+let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),freshRetried=new Set(),radioPromise=null,queueFinished=false,nearEnd=false,loadingSince=0;
 const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`;
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
 const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id)||window.homeLookup?.(id)||window.offlineLookup?.(id);
@@ -334,8 +334,8 @@ function showTrack(item){
 }
 // A song that never reaches 'playing' is treated as failed instead of spinning forever.
 function armWatchdog(version,ms=15000){clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||!playbackWanted||$('#online-player').dataset.state!=='loading')return;resolutionBusy=false;retryAudioLevel(version)},ms)}
-async function startOnline(autostart=true,minimumLevel=1){
-  const item=audioQueue[audioIndex];if(!item)return;const {version,signal}=beginPlayback();
+async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
+  const item=audioQueue[audioIndex];if(!item)return;const {version,signal}=beginPlayback();resumeAt=resumeFrom;
   playbackWanted=autostart;
   resolutionBusy=true;activeLevel=0;recordedReference=null;
   if(onlineAudio.getAttribute('src'))onlineAudio.pause();
@@ -365,6 +365,9 @@ async function startOnline(autostart=true,minimumLevel=1){
 async function retryAudioLevel(version=playVersion){
   if(version!==playVersion||resolutionBusy||!playbackWanted)return;const item=audioQueue[audioIndex];if(!item)return;
   if(activeLevel===0&&item.provider!=='local'&&cachedIds.has(item.id)){forgetAudio(item);return startOnline(true,1)}
+  // YouTube can cut or refuse one stream: the server then resolves a fresh one (other
+  // clients), so a song gets one more try from the same point before it counts as failed.
+  if(item.provider==='piped'&&activeLevel===1&&!freshRetried.has(item.id)){freshRetried.add(item.id);$('#playback-status').textContent='Reconectando con YouTube…';return startOnline(true,1,lastPlaybackTime>.25?lastPlaybackTime:0)}
   if(item.provider==='piped'&&activeLevel<3&&onlineStatus?.piped)return startOnline(true,activeLevel<=1?2:3);
   resolutionBusy=true;
   if(await tryAudiusFallback(item,version))return;
@@ -439,7 +442,7 @@ async function ensureRadio(force=false){
 }
 function playList(list,index=0,shuffle=false){
   if(!list.length)return;const items=shuffle?[...list].sort(()=>Math.random()-.5):[...list];
-  audioQueue=items;audioIndex=shuffle?0:Math.max(0,index);failedReferences.clear();radioTried.clear();failStreak=0;startOnline();
+  audioQueue=items;audioIndex=shuffle?0:Math.max(0,index);failedReferences.clear();radioTried.clear();freshRetried.clear();failStreak=0;startOnline();
 }
 // Adds songs after what the user queued, before automatic radio picks. If the music had
 // already finished (or failed), the first added song starts right away.
