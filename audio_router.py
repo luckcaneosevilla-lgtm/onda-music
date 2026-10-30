@@ -33,7 +33,7 @@ class AudioRouter:
         self.fallback=fallback;self.cache={};self.lock=threading.Lock()
         self.inner=InnerTubeResolver()
         self.pending=deque(maxlen=20);self.preparing=set();self.running=False
-        self.prefixes=PrefixCache();self.prefixes.fragment=65536
+        self.prefixes=PrefixCache(limit=2*1024*1024,fragment=65536)
 
     def prefetch_many(self,items):
         """Bound speculation to one background worker and the latest 20 results."""

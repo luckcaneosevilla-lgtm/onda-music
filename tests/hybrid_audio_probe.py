@@ -38,7 +38,6 @@ def main():
                 video_id=metadata['provider_id']
                 with onda.db() as db:onda.provider.store(db,[metadata]);db.commit()
                 # Match a search response preparing this result before Play.
-                fallback.start()
                 prepared=time.perf_counter();router.prefetch_many([metadata])
                 deadline=time.monotonic()+30
                 while router.running and time.monotonic()<deadline:time.sleep(.05)
@@ -69,7 +68,6 @@ def main():
                 results.append(result);print(json.dumps(result),flush=True)
     finally:
         server.shutdown();server.server_close()
-        for worker in list(fallback.idle):worker.kill()
         if music.process:
             music.process.kill();music.process.wait(timeout=5)
         gc.collect();temporary.cleanup()

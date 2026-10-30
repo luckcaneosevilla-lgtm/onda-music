@@ -94,7 +94,8 @@ class InnerTubeResolver:
         if data.get('videoDetails',{}).get('videoId')!=video_id:return None
         candidates=[f for f in data.get('streamingData',{}).get('adaptiveFormats',[])
                     if isinstance(f,dict) and f.get('mimeType','').startswith(('audio/mp4','audio/webm'))
-                    and f.get('url') and YtDlpResolver.allowed(f['url']) and f.get('itag')!=139]
+                    and isinstance(f.get('url'),str) and len(f['url'])<=8192
+                    and YtDlpResolver.allowed(f['url']) and f.get('itag')!=139]
         # Preserve AAC-LC for Safari; never choose HE-AAC's incorrect duration.
         candidates.sort(key=lambda f:(f.get('itag')!=140,not f['mimeType'].startswith('audio/mp4'),-int(f.get('bitrate') or 0)))
         for f in candidates:

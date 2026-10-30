@@ -1,4 +1,5 @@
 import argparse
+import gc
 import datetime as dt
 import getpass
 import hashlib
@@ -250,6 +251,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             import traceback; traceback.print_exc(); self.send(500,{'error':'No se pudo completar la operación.'})
         finally:
+            if urlparse(self.path).path.startswith(('/api/audio/','/api/online/search')):
+                gc.collect()
             if TRACE and urlparse(self.path).path.startswith('/api/'): print(f'[trace] {self.command} {urlparse(self.path).path} {time.perf_counter()-self.started:.3f}s',flush=True)
 
     def api(self,c,path):
@@ -638,8 +641,9 @@ def main():
             c.execute("UPDATE users SET role='admin',status='active' WHERE id=?",(u['id'],)); audit(c,u['id'],u['id'],'bootstrap','Verificación local de contraseña',{'role':u['role']},{'role':'admin'}); c.commit()
         print('Administrador configurado. Recarga IVOX.')
     else:
-        # Warm pools: yt-dlp workers resolve one known video so the player JS is cached before the first play.
-        resolver.start(); provider.music.start()
+        # Only the lightweight catalog worker stays resident. Audio fallback is
+        # one on-demand child process, reaped immediately after extraction.
+        provider.music.start()
         if TURSO:
             # A cheap ping keeps one pooled TLS connection to Turso alive, so a request
             # after a quiet minute (the first Play, opening the library) never pays a handshake.

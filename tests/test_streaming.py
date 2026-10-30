@@ -81,12 +81,12 @@ class StreamingTests(unittest.TestCase):
         with patch.object(resolver,'resolve',return_value=item),patch('audio_resolver.get_response',return_value=(Mock(),response)):
             resolver.prefetch_fragment('dQw4w9WgXcQ')
         self.assertEqual(response.body.tell(),0);self.assertIsNone(resolver.prefixes.get('dQw4w9WgXcQ',URL))
-    def test_expiry_honours_provider_even_when_ttl_is_two_hours(self):
+    def test_expiry_honours_provider_and_caps_cache_at_thirty_minutes(self):
         resolver=YtDlpResolver();expiry=int(time.time()+900)
         with patch.object(resolver,'run',return_value=URL+'&expire='+str(expiry)):
             item=resolver.resolve('dQw4w9WgXcQ')
         self.assertEqual(item['expires'],expiry-120)
-        self.assertEqual(resolver.cache_ttl,7200)
+        self.assertEqual(resolver.cache_ttl,1800)
     def test_cache_hit_does_not_wait_for_background_refresh(self):
         resolver=YtDlpResolver();resolver.cache['dQw4w9WgXcQ']=self.item()
         lock=threading.Lock();lock.acquire();resolver.locks['dQw4w9WgXcQ']=[lock,1]

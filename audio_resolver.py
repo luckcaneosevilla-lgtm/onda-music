@@ -1,12 +1,11 @@
-"""Level 1: resolve pure audio with a pool of warm yt-dlp workers; keep URLs server-side."""
-from collections import deque
+"""On-demand, single-flight yt-dlp fallback; no resident audio subprocesses."""
 from contextlib import closing
 import http.client
+import gc
 import importlib.util
 import json
 import os
 from pathlib import Path
-import queue
 import re
 import signal
 import sqlite3
@@ -30,106 +29,60 @@ OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[a
 # Python equivalents of --http-chunk-size 8M and -N 8. Extraction uses
 # download=False: these options only apply if yt-dlp itself downloads media.
 OPTIONS.update(http_chunk_size=8*1024*1024,concurrent_fragment_downloads=8)
-# A worker imports yt-dlp once and keeps one YoutubeDL alive: the player JS and
-# signature functions stay in memory, so each new song costs ~1 s instead of a
-# fresh ~2.7 s process. One video id per stdin line, one JSON line back.
-WORKER='''import copy,json,os,re,sys
+# One request per child. Only one YoutubeDL instance exists at a time, and its
+# context manager closes any challenge runtime before trying another profile.
+WORKER='''import copy,gc,json,re,sys
 from yt_dlp import YoutubeDL
 class Quiet:
     def debug(self,m):pass
     info=warning=error=debug
-options=json.loads(sys.argv[1]);fast_options=copy.deepcopy(options)
+options=json.loads(sys.argv[1])
+parts=sys.stdin.readline().strip().split();video_id=parts[0] if parts else ''
+mode=parts[1] if len(parts)>1 else '';url=None;failure='extract_failed';engine='yt-dlp'
 def reason(error):
     text=str(error).lower()
     for needle,code in [('not a bot','bot_check'),('sign in','sign_in_required'),('javascript runtime','javascript_required'),('requested format','format_unavailable'),('http error 403','upstream_403'),('timed out','network_timeout'),('not available','video_unavailable')]:
         if needle in text:return code
     return 'extract_failed'
-fast_options['extractor_args']['youtube']['player_skip']=['webpage','configs','initial_data']
-# Retry after YouTube refused a stream (datacenter IPs are often blocked for one client):
-# other player clients. tv/web_safari/mweb need a JS runtime (deno + yt-dlp-ejs, see Dockerfile).
-alt_options=copy.deepcopy(options);alt_options['extractor_args']['youtube']['player_client']=['tv','web_safari','mweb','visionos']
-direct_options=copy.deepcopy(options);direct_options['extractor_args']['youtube']['player_client']=['visionos']
-ydl=YoutubeDL(dict(options,logger=Quiet()))
-fast=YoutubeDL(dict(fast_options,logger=Quiet()))
-alt=YoutubeDL(dict(alt_options,logger=Quiet()))
-direct=YoutubeDL(dict(direct_options,logger=Quiet()))
-print("ready",flush=True)
-for line in sys.stdin:
-    parts=line.strip().split();video_id=parts[0] if parts else '';url=None;engine='yt-dlp-fast';failure='extract_failed'
-    if re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
-        # Off by default: with yt-dlp 2026.10.26 the skip-webpage extraction failed on every
-        # tested song and only added ~0.1 s before the compatible path. IVOX_YTDLP_FAST=1 re-enables it.
-        if len(parts)==1 and os.environ.get('IVOX_YTDLP_FAST','0')=='1':
-            try:url=fast.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
-            except Exception:pass
-        # Try the lightweight client without skipping webpage/config requests.
-        # Refused URLs still go through open()'s compatible refresh; extraction
-        # failures fall through here to the full supported-runtime path.
-        if not url and len(parts)==1:
-            try:
-                url=direct.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
-                if url:engine='yt-dlp-direct'
-            except Exception:pass
-        if not url:
-            clients=(('yt-dlp-compatible',ydl),('yt-dlp-alt',alt)) if len(parts)>1 and parts[1]=='standard' else ((('yt-dlp-alt',alt),('yt-dlp-compatible',ydl)) if len(parts)>1 else (('yt-dlp-compatible',ydl),))
-            for engine,client in clients:
-                try:url=client.extract_info("https://www.youtube.com/watch?v="+video_id,download=False).get("url")
-                except Exception as error:failure=reason(error)
-                if url:break
-    print(json.dumps({"id":video_id,"url":url,"engine":engine,"error":failure if not url else None}),flush=True)
+profiles=[('yt-dlp-direct',['visionos']),('yt-dlp-compatible',None),('yt-dlp-alt',['tv','web_safari','mweb','visionos'])]
+if mode=='standard':profiles=profiles[1:]
+elif mode=='compatible':profiles=profiles[2:]+profiles[1:2]
+if re.fullmatch(r'[A-Za-z0-9_-]{11}',video_id):
+    for engine,clients in profiles:
+        config=copy.deepcopy(options)
+        if clients:config['extractor_args']['youtube']['player_client']=clients
+        try:
+            with YoutubeDL(dict(config,logger=Quiet())) as ydl:
+                info=ydl.extract_info('https://www.youtube.com/watch?v='+video_id,download=False)
+                url=info.get('url');del info
+        except Exception as error:failure=reason(error)
+        gc.collect()
+        if url:break
+print(json.dumps({'id':video_id,'url':url,'engine':engine,'error':failure if not url else None}),flush=True)
 '''
 
-class Worker:
-    """One warm yt-dlp process. A reader thread turns stdout into a queue so every answer can time out."""
-    def __init__(self,process):
-        self.process=process;self.lines=queue.Queue();self.served=0
-        threading.Thread(target=self.pump,daemon=True).start()
-    def pump(self):
-        try:
-            for line in self.process.stdout:self.lines.put(line)
-        except (OSError,ValueError):pass
-        self.lines.put(None)
-    def alive(self):return self.process.poll() is None
-    def ready(self,timeout):
-        line=self.lines.get(timeout=timeout)
-        if line is None or line.strip()!='ready':raise OSError('worker did not start')
-    def ask(self,video_id,timeout,compatible=False):
-        self.process.stdin.write(video_id+(' standard' if compatible=='standard' else ' compatible' if compatible else '')+'\n');self.process.stdin.flush()
-        line=self.lines.get(timeout=timeout)
-        if line is None:raise OSError('worker exited')
-        self.served+=1
-        answer=json.loads(line)
-        if answer.get('id')!=video_id:raise OSError('worker out of sync')
-        self.last_engine=answer.get('engine','yt-dlp')
-        self.last_error=answer.get('error') or 'extract_failed'
-        return answer.get('url')
-    def kill(self):
-        try:
-            # yt-dlp can have a live Deno child. Killing only Python leaks the
-            # challenge solver and defeats the one-worker memory bound.
-            if getattr(self.process,'ivox_process_group',False):os.killpg(self.process.pid,signal.SIGKILL)
-            elif os.name=='nt' and getattr(self.process,'pid',None):
-                subprocess.run(['taskkill','/PID',str(self.process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-            else:self.process.kill()
-        except OSError:pass
-        except subprocess.TimeoutExpired:self.process.kill()
-        try:
-            if hasattr(self.process,'wait'):self.process.wait(timeout=1)
-            for name in ('stdin','stdout'):
-                stream=getattr(self.process,name,None)
-                if hasattr(stream,'close'):stream.close()
-        except (OSError,ValueError,subprocess.TimeoutExpired):pass
+
+def kill_process_tree(process):
+    """A timed-out yt-dlp must not leave a Deno challenge solver behind."""
+    try:
+        if os.name!='nt':os.killpg(process.pid,signal.SIGKILL)
+        elif process.poll() is None:
+            subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,timeout=3,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    except (OSError,subprocess.TimeoutExpired):
+        if process.poll() is None:process.kill()
+    if process.poll() is None:process.kill()
+    process.wait(timeout=3)
+
 
 class YtDlpResolver:
-    def __init__(self,size=3,recycle=150):
+    def __init__(self,size=1,recycle=None):
+        # Retain constructor compatibility, but never create a process pool.
         self.cache={};self.failures={};self.failure_reasons={};self.refreshes={};self.guard=threading.Lock();self.store=None
-        self.locks={}
-        # Plays always find a worker: prefetching uses at most size-1 of them.
-        self.size=size;self.recycle=recycle;self.timeout=15;self.idle=[];self.count=0;self.available=threading.Condition(self.guard)
-        self.pending=deque(maxlen=15);self.prefetchers=0;self.playing=0
-        self.background_jobs={}
-        self.engines={};self.standard={}
-        self.prefixes=PrefixCache();self.shared=None;self.cache_ttl=7200;self.compatible={}
+        self.locks={};self.timeout=20;self.slot=threading.BoundedSemaphore(1)
+        self.engines={};self.standard={};self.compatible={}
+        self.prefixes=PrefixCache(limit=2*1024*1024,fragment=65536)
+        self.shared=None;self.cache_ttl=1800
     def persist(self,path,cloud_factory=None,scope=None):
         # Resolved URLs survive restarts; rows still honour the per-URL expiry.
         self.store=str(path)
@@ -157,118 +110,48 @@ class YtDlpResolver:
         try:
             with closing(sqlite3.connect(self.store,timeout=5)) as c,c:c.execute(sql,args)
         except sqlite3.Error:pass
-    def spawn(self):
-        env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'};env['PYTHONIOENCODING']='utf-8'
-        vendor=Path(__file__).resolve().parent/'.vendor'
-        if vendor.exists() and importlib.util.find_spec('yt_dlp') is None:env['PYTHONPATH']=str(vendor)+(os.pathsep+env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
-        process=subprocess.Popen([sys.executable,'-c',WORKER,json.dumps(OPTIONS)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,encoding='utf-8',errors='replace',bufsize=1,env=env,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),start_new_session=os.name!='nt')
-        if os.name!='nt' and getattr(process,'pid',None):process.ivox_process_group=True
-        worker=Worker(process)
-        try:worker.ready(20)
-        except (OSError,queue.Empty):
-            worker.kill();raise OSError('yt-dlp worker did not start') from None
-        return worker
-    def start(self,warm=None):
-        """Boot the whole pool in the background; optionally resolve one id per worker so the player JS is cached too."""
-        def boot(_):
-            try:worker=self.spawn()
-            except OSError:
-                with self.guard:self.count-=1;self.available.notify()
-                return
-            if warm:
-                try:worker.ask(warm,20)
-                except (OSError,ValueError,queue.Empty):
-                    self.release(worker,True);return
-            self.release(worker)
-        with self.guard:
-            missing=self.size-self.count;self.count+=max(0,missing)
-        for i in range(max(0,missing)):threading.Thread(target=boot,args=(i,),daemon=True).start()
-    def acquire(self,timeout,background=False):
-        deadline=time.monotonic()+timeout
-        with self.guard:
-            while True:
-                dead=[w for w in self.idle if not w.alive()]
-                if dead:self.idle=[w for w in self.idle if w.alive()];self.count-=len(dead)
-                if self.idle:return self.idle.pop()
-                if self.count<self.size:self.count+=1;break
-                left=deadline-time.monotonic()
-                if left<=0 or background:return None
-                self.available.wait(left)
-        try:return self.spawn()
-        except OSError:
-            with self.guard:self.count-=1;self.available.notify()
-            return None
-    def release(self,worker,broken=False):
-        if broken or not worker.alive() or worker.served>=self.recycle:
-            worker.kill()
-            with self.guard:self.count-=1;self.available.notify()
-            if not broken:self.start()
-            return
-        with self.guard:self.idle.append(worker);self.available.notify_all()
     def run(self,video_id,background=False):
-        started=time.perf_counter()
-        worker=self.acquire(4 if background else 12,background)
-        if worker is None:raise AudioUnavailable('worker_unavailable')
-        acquired=time.perf_counter()
-        if background:
-            with self.guard:
-                deferred=self.playing>0
-                if not deferred:self.background_jobs[video_id]=worker
-            if deferred:
-                self.release(worker);raise AudioUnavailable('background_deferred')
+        if background:raise AudioUnavailable('background_deferred')
+        if not self.slot.acquire(timeout=12):raise AudioUnavailable('worker_unavailable')
+        process=None;started=time.perf_counter();engine='yt-dlp';url=None
         try:
-            if self.standard.get(video_id,0)>time.time():url=worker.ask(video_id,self.timeout,compatible='standard')
-            elif self.compatible.get(video_id,0)>time.time():url=worker.ask(video_id,self.timeout,compatible=True)
-            else:url=worker.ask(video_id,self.timeout)
-            engine=getattr(worker,'last_engine','yt-dlp');failure=getattr(worker,'last_error','extract_failed')
-        except (OSError,ValueError,queue.Empty) as error:
-            self.release(worker,True)
-            metric('audio_resolve',video_id=video_id,engine='yt-dlp',background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=False,error=type(error).__name__)
-            raise AudioUnavailable('extraction_timeout' if isinstance(error,queue.Empty) else 'worker_failed') from None
-        finally:
-            if background:
-                with self.guard:
-                    if self.background_jobs.get(video_id) is worker:self.background_jobs.pop(video_id,None)
-        self.release(worker)
-        with self.guard:
-            if len(self.engines)>=300:self.engines.pop(next(iter(self.engines)))
-            self.engines[video_id]=engine
-        metric('audio_resolve',video_id=video_id,engine=engine,background=background,queue_ms=round((acquired-started)*1000,2),resolve_ms=round((time.perf_counter()-acquired)*1000,2),success=bool(url))
-        if not url:raise AudioUnavailable(failure)
-        return url
-    def prefetch(self,video_id):self.prefetch_many([video_id])
-    def prefetch_many(self,ids):
-        if os.environ.get('IVOX_AUDIO_PREFETCH','1')=='0':return
-        # Serial preparation on small instances; Play may cancel a different
-        # speculative extraction rather than wait behind it.
-        if self.size==1:ids=ids[:2]
-        # The whole batch is queued before any drainer starts, newest batch and top result first;
-        # a bounded deque drops requests the user has scrolled away from.
-        ids=[v for v in ids if isinstance(v,str) and re.fullmatch(r'[A-Za-z0-9_-]{11}',v)]
-        with self.guard:
-            for video_id in reversed(ids):
-                cached=self.cache.get(video_id)
-                if cached and cached['expires']>time.time()+600 and self.prefixes.get(video_id,cached['url']):continue
-                if video_id in self.pending:self.pending.remove(video_id)
-                self.pending.appendleft(video_id)
-            if self.size==1:
-                while len(self.pending)>2:self.pending.pop()
-            starting=max(0,min(len(self.pending),max(1,self.size-1)-self.prefetchers));self.prefetchers+=starting
-        for _ in range(starting):threading.Thread(target=self.drain,daemon=True).start()
-    def drain(self):
-        retries={}
-        while True:
+            env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'};env['PYTHONIOENCODING']='utf-8'
+            vendor=Path(__file__).resolve().parent/'.vendor'
+            if vendor.exists() and importlib.util.find_spec('yt_dlp') is None:
+                env['PYTHONPATH']=str(vendor)+(os.pathsep+env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
+            process=subprocess.Popen([sys.executable,'-c',WORKER,json.dumps(OPTIONS)],stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,encoding='utf-8',errors='replace',
+                env=env,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),start_new_session=os.name!='nt')
+            mode=' standard' if self.standard.get(video_id,0)>time.time() else ' compatible' if self.compatible.get(video_id,0)>time.time() else ''
+            output,_=process.communicate(video_id+mode+'\n',timeout=self.timeout)
+            if process.returncode!=0:raise AudioUnavailable('worker_failed')
+            if len(output)>16384:raise AudioUnavailable('invalid_worker_response')
+            answer=json.loads(output)
+            if answer.get('id')!=video_id:raise AudioUnavailable('invalid_worker_response')
+            engine=answer.get('engine','yt-dlp');url=answer.get('url')
+            if not url:raise AudioUnavailable(answer.get('error') or 'extract_failed')
             with self.guard:
-                # A song the user just tapped gets the CPU to itself: no new prefetch starts meanwhile.
-                while self.pending and not (self.playing==0 and (self.idle or self.count<self.size)):self.available.wait(1)
-                if not self.pending:self.prefetchers-=1;return
-                video_id=self.pending.popleft()
-            try:self.prefetch_fragment(video_id)
-            except AudioUnavailable:
-                # Lost the race for a free worker: try again later instead of dropping the song.
-                with self.guard:
-                    if retries.get(video_id,0)<2 and video_id not in self.failures and video_id not in self.cache:
-                        retries[video_id]=retries.get(video_id,0)+1;self.pending.append(video_id)
+                if len(self.engines)>=300:self.engines.pop(next(iter(self.engines)))
+                self.engines[video_id]=engine
+            return url
+        except subprocess.TimeoutExpired:raise AudioUnavailable('extraction_timeout') from None
+        except (OSError,ValueError):raise AudioUnavailable('worker_failed') from None
+        finally:
+            try:
+                if process:
+                    try:kill_process_tree(process)
+                    finally:
+                        for stream in (process.stdin,process.stdout):
+                            if stream:stream.close()
+            finally:
+                self.slot.release();gc.collect()
+                metric('audio_resolve',video_id=video_id,engine=engine,background=False,
+                       resolve_ms=round((time.perf_counter()-started)*1000,2),success=bool(url))
+
+    def prefetch(self,video_id):pass
+    def prefetch_many(self,ids):
+        """Compatibility for older clients. yt-dlp runs only on actual fallback."""
+        return
     def duration(self,video_id):
         # The resolved stream URL carries the audio's real length ('dur', in seconds).
         with self.guard:hit=self.cache.get(video_id)
@@ -283,33 +166,27 @@ class YtDlpResolver:
     def allowed(url):
         try:
             p=urlparse(url)
-            return p.scheme=='https' and not p.username and not p.password and p.port in (None,443) and bool(p.hostname and p.hostname.endswith('.googlevideo.com'))
+            return isinstance(url,str) and len(url)<=8192 and p.scheme=='https' and not p.username and not p.password and p.port in (None,443) and bool(p.hostname and p.hostname.endswith('.googlevideo.com'))
         except ValueError:return False
     def resolve(self,video_id,background=False):
         if not re.fullmatch(r'[A-Za-z0-9_-]{11}',video_id):raise AudioUnavailable()
         # Valid hits never wait behind an in-flight refresh or unrelated video.
         with self.guard:hit=self.cache.get(video_id)
         if not background and hit and hit['expires']>time.time():
-            if hit['expires']<time.time()+300:self.prefetch(video_id)
             return hit
         with self.guard:
             entry=self.locks.setdefault(video_id,[threading.Lock(),0]);entry[1]+=1
-            if not background:self.playing+=1
-            preempt=[worker for vid,worker in self.background_jobs.items() if vid!=video_id] if not background and self.size==1 else []
-        for worker in preempt:worker.kill()
         lock=entry[0];acquired=lock.acquire(timeout=20)
         if not acquired:
             with self.guard:
                 entry[1]-=1
                 if not entry[1]:self.locks.pop(video_id,None)
-                if not background:self.playing-=1;self.available.notify_all()
             raise AudioUnavailable('resolution_busy')
         try:
             with self.guard:
                 cached=self.cache.get(video_id)
                 failed=self.failures.get(video_id,0)>time.time()
             if cached and cached['expires']>time.time()+(600 if background else 0):
-                if not background and cached['expires']<time.time()+300:self.prefetch(video_id)
                 return cached
             if failed:raise AudioUnavailable(self.failure_reasons.get(video_id,'recent_extraction_failure'))
             try:
@@ -330,7 +207,7 @@ class YtDlpResolver:
                 if self.shared:self.shared.enqueue(video_id,item)
                 return item
             except AudioUnavailable as error:
-                # A busy pool is not the song's fault: only real extraction failures are remembered.
+                # A busy fallback slot is not an unplayable song.
                 if not background and str(error)!='worker_unavailable':
                     with self.guard:
                         self.failures={k:v for k,v in self.failures.items() if v>time.time()}
@@ -344,7 +221,6 @@ class YtDlpResolver:
             with self.guard:
                 entry[1]-=1
                 if not entry[1]:self.locks.pop(video_id,None)
-                if not background:self.playing-=1;self.available.notify_all()
     def invalidate(self,video_id):
         with self.guard:self.cache.pop(video_id,None)
         self.prefixes.remove(video_id)
@@ -416,6 +292,5 @@ class YtDlpResolver:
             if retry:return self.open(video_id,range_header,False)
             raise AudioUnavailable(str(error) if isinstance(error,AudioUnavailable) else type(error).__name__) from None
 
-# JS challenge solvers are memory-heavy. A small private deployment must not run
-# three copies at once and restart the entire app while several tracks are queued.
+# At most one on-demand fallback process; no subprocess is kept between plays.
 resolver=YtDlpResolver(size=1)

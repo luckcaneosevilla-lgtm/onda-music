@@ -37,17 +37,15 @@ def main():
                 metadata=songs[0]
                 video_id=metadata['provider_id']
                 with onda.db() as db:onda.provider.store(db,[metadata]);db.commit()
-                # Warm only the worker process, never resolve/prefetch these songs.
-                fallback.start()
+                # No audio workers or prefetch: first Play includes any fallback startup.
                 prepared=time.perf_counter()
                 deadline=time.monotonic()+30
-                while not fallback.idle and time.monotonic()<deadline:time.sleep(.05)
                 preparation_seconds=round(time.perf_counter()-prepared,3)
                 for state in ('cold_audio','repeat'):
                     started=time.perf_counter();connection=None
                     result={'query':query,'title':metadata['title'],'artist':metadata['channel'],
                             'expected_source':expected,'state':state,'target_seconds':target,
-                            'worker_start_seconds':preparation_seconds,'worker_ready':bool(fallback.idle)}
+                            'resident_ytdlp_workers':0}
                     try:
                         connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=30)
                         connection.request('GET','/api/audio/'+video_id,headers={'Cookie':client.cookie,'Range':'bytes=0-32767'})
@@ -73,7 +71,6 @@ def main():
                 results.append(result);print(json.dumps(result),flush=True)
     finally:
         server.shutdown();server.server_close()
-        for worker in list(fallback.idle):worker.kill()
         router.inner.close()
         if music.process:
             music.process.kill();music.process.wait(timeout=5)
