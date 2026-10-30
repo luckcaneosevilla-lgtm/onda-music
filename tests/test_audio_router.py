@@ -76,6 +76,18 @@ class AudioRouterTests(unittest.TestCase):
             prefix.assert_called_once();fallback.prefetch.assert_not_called()
         self.assertFalse(router.running);self.assertFalse(router.preparing)
 
+    def test_prefetch_warms_innertube_without_spawning_fallback(self):
+        fallback=Mock();router=AudioRouter(fallback)
+        metadata=dict(META,provider='piped',provider_id='abcdefghijk')
+        router.inner.resolve.return_value={'url':'https://r1.googlevideo.com/audio'}
+        with patch('audio_router.threading.Thread'):
+            router.prefetch_many([metadata])
+        with patch.object(router,'find') as find:
+            router.prepare()
+        router.inner.resolve.assert_called_once_with('abcdefghijk')
+        find.assert_not_called();fallback.prefetch.assert_not_called()
+        self.assertFalse(router.running);self.assertFalse(router.preparing)
+
     def test_prefetch_does_not_block_play_and_cache_lasts_30_minutes(self):
         fallback=Mock();fallback.resolve.return_value={'mime':'audio/mp4'}
         router=AudioRouter(fallback);key=router.key('abcdefghijk',META)

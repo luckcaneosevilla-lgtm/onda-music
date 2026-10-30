@@ -59,6 +59,8 @@ class AudioRouter:
                 if not self.pending:self.running=False;return
                 video_id,metadata=self.pending.popleft();key=self.key(video_id,metadata);self.preparing.add(key)
             try:
+                # Warm the same lightweight resolver Play uses; never spawn yt-dlp.
+                if self.inner.resolve(video_id):continue
                 item=self.find(video_id,metadata,thorough=True)
                 if item:self.prepare_prefix(video_id,item)
                 else:self.fallback.prefetch(video_id)

@@ -2,6 +2,21 @@
 // only one: online songs, device copies and imported files all play through it.
 // Seek bar, buffer and volume belong to player-controls.js (IVoxPlayerControls).
 const onlineAudio=$('#online-audio');
+// Native media controls its own buffer. play() is requested in the gesture,
+// never gated on canplaythrough. ResourceTiming exposes actual network timing.
+let playbackTrace=null;
+function tracePlayback(stage,extra={}){
+  const t=playbackTrace;if(!t||t.version!==playVersion||t.marks.has(stage))return;
+  t.marks.add(stage);
+  const ahead=onlineAudio.buffered.length?Math.max(0,onlineAudio.buffered.end(onlineAudio.buffered.length-1)-onlineAudio.currentTime):0;
+  console.info('[IVOX playback]',{stage,version:t.version,elapsed_ms:Math.round(performance.now()-t.start),readyState:onlineAudio.readyState,buffer_seconds:+ahead.toFixed(3),...extra});
+}
+for(const event of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting'])onlineAudio.addEventListener(event,()=>tracePlayback(event));
+onlineAudio.addEventListener('timeupdate',()=>{if(onlineAudio.currentTime>0&&!onlineAudio.paused)tracePlayback('first_progress')});
+try{new PerformanceObserver(list=>{for(const e of list.getEntries()){
+  const t=playbackTrace;if(!t||e.name!==t.url||e.startTime<t.start)continue;
+  tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
+}}).observe({type:'resource',buffered:true})}catch{}
 function prepareAudioSession(){try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch{}}
 prepareAudioSession();
 let onlineData={saves:[],playlists:[],items:{},recent:[]},onlineStatus;
@@ -89,7 +104,7 @@ async function downloadOnline(v){
 window.cancelOnlineSearch=()=>{closeSuggest();searchController?.abort();searchVersion++;searchView.loading=false};
 const openLink=link=>link.onclick=e=>{e.preventDefault();history.pushState({},'',link.getAttribute('href'));render().catch(e=>notify(e.message))};
 
-async function onlineState(){const [status,data]=await Promise.all([api('/api/online/status'),api('/api/online/library')]);onlineStatus=status;onlineData=data;onlineLoaded=true}
+async function onlineState(){const [status,data]=await Promise.all([api('/api/online/status'),api('/api/online/library')]);onlineStatus=status;onlineData=data;onlineLoaded=true;prefetchAudio(Object.values(data.items||{}).slice(0,2))}
 // Pages open instantly with the last known library; a background refresh redraws them.
 let onlineLoaded=false,onlineRefresh=null;
 function refreshOnline(redraw){onlineRefresh??=onlineState().finally(()=>{onlineRefresh=null});onlineRefresh.then(()=>{if(me)redraw()},()=>{})}
@@ -340,8 +355,11 @@ function showTrack(item){
 // A song that never reaches 'playing' is treated as failed instead of spinning forever.
 function armWatchdog(version,ms=30000){clearTimeout(watchdog);watchdog=setTimeout(()=>{if(version!==playVersion||!playbackWanted||$('#online-player').dataset.state!=='loading')return;resolutionBusy=false;retryAudioLevel(version)},ms)}
 async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
+  const intentAt=performance.now();
   prepareAudioSession();
   const item=audioQueue[audioIndex];if(!item)return;const {version,signal}=beginPlayback();resumeAt=resumeFrom;
+  playbackTrace={version,start:intentAt,marks:new Set(),url:null};
+  tracePlayback('play_intent');
   playbackWanted=autostart;
   resolutionBusy=true;activeLevel=0;recordedReference=null;
   if(onlineAudio.getAttribute('src'))onlineAudio.pause();
@@ -362,7 +380,9 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
     activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped'}[result.source]||'Audius';
     if(blobUrl&&result.url!==blobUrl&&blobUrl!==window.crossfadeHold)URL.revokeObjectURL(blobUrl);
     blobUrl=result.source==='device'?result.url:null;
-    onlineAudio.autoplay=autostart;onlineAudio.src=result.url;resolutionBusy=false;
+    onlineAudio.preload='auto';onlineAudio.autoplay=autostart;
+    playbackTrace.url=new URL(result.url,location.href).href;
+    tracePlayback('source_assigned');onlineAudio.src=result.url;resolutionBusy=false;
     if(!autostart){clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
     try{await onlineAudio.play()}catch(e){if(version!==playVersion||e.name==='AbortError')return;if(e.name==='NotAllowedError'){playbackWanted=false;clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel(version)}
   }catch(e){if(version!==playVersion||e.name==='AbortError'||!me)return;resolutionBusy=false;retryAudioLevel(version)}

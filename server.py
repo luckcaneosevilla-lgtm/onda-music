@@ -313,7 +313,7 @@ class Handler(BaseHTTPRequestHandler):
                 marks=','.join('?' for _ in ids)
                 known={row[0] for row in c.execute('SELECT video_id FROM online_catalog WHERE video_id IN ('+marks+')',tuple('piped:'+v for v in ids))}
                 ids=[v for v in ids if 'piped:'+v in known]
-            resolver.prefetch_many(ids)
+            audio_router.prefetch_many(list(provider.metadata(c,['piped:'+v for v in ids]).values()))
             self.send(202,{});return
         m=re.fullmatch(r'/api/audio/([A-Za-z0-9_-]{11})',path)
         if m and method=='GET':
@@ -521,6 +521,7 @@ class Handler(BaseHTTPRequestHandler):
             if accepts:self.send_header('Accept-Ranges',accepts)
             elif response.status==206:self.send_header('Accept-Ranges','bytes')
             self.end_headers()
+            self.wfile.flush()
             if TRACE: print(f'[trace] audio headers {self.headers.get("Range")} {time.perf_counter()-self.started:.3f}s',flush=True)
             while True:
                 try:self.session(c)
@@ -530,13 +531,14 @@ class Handler(BaseHTTPRequestHandler):
                 # merely to fill a 64 KiB server buffer.
                 reader=getattr(response,'read1',response.read)
                 phase='upstream_read'
-                chunk=reader(16384 if sent==0 else 65536)
+                chunk=reader(8192)
                 if not chunk:
                     expected=response.getheader('Content-Length')
                     if expected and expected.isdigit() and sent<int(expected):raise http.client.IncompleteRead(b'')
                     break
                 phase='client_write'
                 self.wfile.write(chunk)
+                self.wfile.flush()
                 if sent==0:
                     self.wfile.flush();first_byte_ms=round((time.perf_counter()-self.started)*1000,2)
                     metric('audio_first_byte',request_id=self.audio_request_id,video_id=getattr(self,'audio_video_id',None),first_byte_ms=first_byte_ms,**timings)

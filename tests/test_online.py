@@ -118,14 +118,15 @@ class OnlineTests(unittest.TestCase):
             def getheader(self,key,default=None):return {'Content-Type':'audio/mp4','Content-Length':'4','Content-Range':'bytes 0-3/100'}.get(key,default)
         with patch.object(onda.resolver,'open',return_value=(Mock(),Bare(b'1234'),'audio/mp4')):
             conn=http.client.HTTPConnection('127.0.0.1',self.port);conn.request('GET','/api/audio/testVideo01',headers={'Cookie':self.client.cookie,'Range':'bytes=0-3'})
-            response=conn.getresponse();self.assertEqual(response.status,206);self.assertEqual(response.getheader('Content-Range'),'bytes 0-3/100');self.assertEqual(response.getheader('Accept-Ranges'),'bytes');self.assertEqual(response.read(),b'1234');conn.close()
+            response=conn.getresponse();self.assertEqual(response.status,206);self.assertEqual(response.getheader('Content-Range'),'bytes 0-3/100');self.assertEqual(response.getheader('Accept-Ranges'),'bytes');self.assertEqual(response.getheader('X-Accel-Buffering'),'no');self.assertEqual(response.read(),b'1234');conn.close()
         self.assertEqual(self.client.request('/api/audio/testVideo01',extra={'Range':'bytes=-'})[0],416)
         top=['testVideo01','testVideo02','testVideo03','testVideo04','testVideo05']
         with onda.db() as c:
-            for video_id in top:c.execute('INSERT INTO online_catalog VALUES(?,?,?)',('piped:'+video_id,'{}',int(time.time())))
-        with patch.object(onda.resolver,'prefetch_many') as prefetch:
+            for video_id in top:c.execute('INSERT INTO online_catalog VALUES(?,?,?)',('piped:'+video_id,json.dumps({'id':'piped:'+video_id,'provider':'piped','provider_id':video_id}),int(time.time())))
+        with patch.object(onda.audio_router,'prefetch_many') as prefetch:
             self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':top})[0],202)
-            prefetch.assert_called_once_with(top)
+            self.assertEqual([v['provider_id'] for v in prefetch.call_args.args[0]],top)
+            prefetch.assert_called_once()
             self.assertEqual(self.client.request('/api/audio/prefetch','POST',{'video_ids':top+['testVideo06']})[0],400)
             self.assertEqual(Client(self.port).request('/api/audio/prefetch','POST',{'video_ids':['testVideo01']})[0],401)
             self.assertEqual(prefetch.call_count,1)
