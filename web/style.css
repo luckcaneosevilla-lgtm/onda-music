@@ -105,3 +105,7 @@ dialog::backdrop{background:#050507c4;-webkit-backdrop-filter:blur(6px);backdrop
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 [hidden]{display:none!important}
+
+.app-version{display:block;text-align:center;color:#aaa;font-size:11px;padding:8px 12px 160px}
+.app-update{position:fixed;z-index:150;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:min(92vw,500px);box-sizing:border-box;display:flex;align-items:center;gap:12px;padding:14px 18px;background:#17171d;color:#fff;border:1px solid #d4af37;border-radius:14px;box-shadow:0 8px 30px #0008}
+.app-update[hidden]{display:none}.app-update span{flex:1}.app-update button{flex-shrink:0}
