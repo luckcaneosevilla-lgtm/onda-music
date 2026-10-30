@@ -18,6 +18,7 @@ from urllib.parse import urlparse, parse_qs, quote
 from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
+from audio_router import audio_router
 from streaming import metric
 import turso
 
@@ -315,14 +316,15 @@ class Handler(BaseHTTPRequestHandler):
         if m and method=='GET':
             video_id=m[1]
             self.audio_video_id=video_id
+            metadata=provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id)
             try:
                 if parse_qs(urlparse(self.path).query).get('refresh')==['1']:resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
-                    item=resolver.resolve(video_id)
-                    self.send(200,{'url':'/api/audio/'+video_id,'source':'yt-dlp','level':1,'mime':item['mime']});return
+                    item=audio_router.resolve(video_id,metadata)
+                    self.send(200,{'url':'/api/audio/'+video_id,'source':item['source'],'level':1,'mime':item['mime']});return
                 range_header=self.headers.get('Range')
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
-                connection,response,mime=resolver.open(video_id,range_header)
+                connection,response,mime=audio_router.open(video_id,range_header,metadata)
             except AudioUnavailable as error:
                 # The reason (e.g. upstream_403: YouTube refused this server's IP) is safe to show.
                 reason=re.sub(r'[^A-Za-z0-9_]','',str(error))[:40]
@@ -395,6 +397,7 @@ class Handler(BaseHTTPRequestHandler):
             require(2<=len(q)<=120,'Escribe entre 2 y 120 caracteres para buscar.')
             require(len(page)<=24000 and (not page or re.fullmatch('[A-Za-z0-9_=-]+',page)),'Página inválida.')
             result=provider.search(c,uid,q,page,params.get('source',['auto'])[0],params.get('filter',['songs'])[0])
+            audio_router.prefetch_many(result.get('items',[]))
             resolver.prefetch_many([v['provider_id'] for v in result.get('items',[])[:5] if v.get('provider')=='piped'])
             c.commit();self.send(200,result);return
         if path=='/api/online/charts' and method=='GET':
@@ -497,6 +500,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.send_response(response.status);self.headers_common(mime)
             self.send_header('X-IVOX-Audio-Level',str(level))
+            if timings.get('source'):self.send_header('X-IVOX-Audio-Source',timings['source'])
             self.send_header('Cache-Control','private, no-store')
             self.send_header('X-Accel-Buffering','no')
             self.send_header('X-IVOX-Audio-Cache','prefix' if timings.get('prefix_hit') else 'passthrough')
@@ -537,6 +541,7 @@ class Handler(BaseHTTPRequestHandler):
             # A failed prefix continuation must not be served again on the
             # next recovery request. Client skips/disconnects keep valid cache.
             if phase=='upstream_read' and level==1 and self.audio_video_id:
+                audio_router.prefixes.remove(self.audio_video_id)
                 resolver.invalidate(self.audio_video_id)
         finally:
             connection.close()

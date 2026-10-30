@@ -27,6 +27,9 @@ class AudioUnavailable(Exception):pass
 # Plain AAC-LC (itag 140) before any other m4a: Safari reports HE-AAC (139, mp4a.40.5) at
 # about twice its length, so the song ends and minutes of silence follow.
 OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[acodec^=mp4a.40.2]/bestaudio[ext=m4a]/bestaudio','noplaylist':True,'cachedir':False,'extractor_args':{'youtube':{'skip':['hls','dash']}}}
+# Python equivalents of --http-chunk-size 8M and -N 8. Extraction uses
+# download=False: these options only apply if yt-dlp itself downloads media.
+OPTIONS.update(http_chunk_size=8*1024*1024,concurrent_fragment_downloads=8)
 # A worker imports yt-dlp once and keeps one YoutubeDL alive: the player JS and
 # signature functions stay in memory, so each new song costs ~1 s instead of a
 # fresh ~2.7 s process. One video id per stdin line, one JSON line back.

@@ -28,7 +28,7 @@ class PrefixCache:
         with self.lock:
             item=self.items.get(video_id)
             if not item:return None
-            if item['expires']<=time.time()+60 or item['url']!=url:
+            if item['expires']<=time.time()+60 or (url is not None and item['url']!=url):
                 self.size-=len(self.items.pop(video_id)['data']);return None
             self.items.move_to_end(video_id);return item
     def remove(self, video_id):
