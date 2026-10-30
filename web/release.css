@@ -1,0 +1,13 @@
+.release-dialog{width:min(760px,calc(100% - 28px));max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--line-gold);border-radius:22px;background:var(--panel);color:var(--text);overflow:auto}
+.release-dialog[open]{display:grid;grid-template-columns:260px 1fr}
+.release-dialog::backdrop{background:#05050bd9;backdrop-filter:blur(6px)}
+.release-close{position:absolute;right:12px;top:10px;z-index:1;font-size:25px;width:42px;height:42px;padding:0;background:var(--panel);border:1px solid var(--line)}
+.release-art{display:flex;flex-direction:column;align-items:center;justify-content:center;background:#10182b;padding:36px 14px;border-right:1px solid var(--line-gold)}
+.anubis{width:220px;max-width:100%;overflow:visible}.anubis-body{transform-origin:120px 235px;animation:anubis-sway 2.8s ease-in-out infinite}.anubis-head{transform-origin:120px 140px;animation:anubis-nod 2.8s ease-in-out infinite}.anubis-notes{animation:anubis-notes 2.8s ease-in-out infinite}
+.release-version{font-family:var(--display);font-size:25px;color:var(--gold-2);margin-top:12px}
+.release-copy{padding:52px 30px 30px}.release-copy h1{font:600 clamp(23px,4vw,30px)/1.25 var(--display);margin:0 0 16px}.release-copy p{color:#c4bfcd;font-size:14px}.release-copy ul{list-style:none;padding:0;margin:24px 0}.release-copy li{margin:18px 0;padding-left:14px;border-left:2px solid var(--gold)}.release-copy li strong{display:block;font-size:14px}.release-copy li span{display:block;font-size:13px;color:#c4bfcd;margin-top:4px}.release-start{width:100%;min-height:46px}.release-trigger{color:var(--gold-2);font-size:12px;margin-bottom:12px}
+@keyframes anubis-sway{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg) translateY(-4px)}}
+@keyframes anubis-nod{0%,100%{transform:rotate(0)}50%{transform:rotate(-7deg)}}
+@keyframes anubis-notes{0%,100%{transform:translateY(0);opacity:.6}50%{transform:translateY(-8px);opacity:1}}
+@media(max-width:600px){.release-dialog[open]{grid-template-columns:1fr}.release-art{padding:12px;flex-direction:row;gap:12px;border-right:0;border-bottom:1px solid var(--line-gold)}.anubis{width:118px;height:130px}.release-version{margin:0;font-size:28px}.release-copy{padding:24px}.release-copy ul{margin:18px 0}.release-copy li{margin:14px 0}}
+@media(prefers-reduced-motion:reduce){.anubis-body,.anubis-head,.anubis-notes{animation:none}}
