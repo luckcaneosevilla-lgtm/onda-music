@@ -1,4 +1,4 @@
-"""Prefer a public Audius recording matching catalog metadata, then YouTube.
+"""Try direct InnerTube, prepared Audius audio, then warm yt-dlp.
 
 Only public, ungated tracks qualify. Catalog presence is not a rights clearance.
 URLs remain server-side; get_response validates public destinations on every hop.
@@ -17,6 +17,7 @@ from audio_resolver import AudioUnavailable, resolver
 from music_provider import get_response
 from streaming import metric, PrefixCache, prefix_response, content_range
 from youtube_provider import ProviderError
+from innertube_resolver import InnerTubeResolver
 
 
 def normalized(value):
@@ -30,6 +31,7 @@ def normalized(value):
 class AudioRouter:
     def __init__(self,fallback):
         self.fallback=fallback;self.cache={};self.lock=threading.Lock()
+        self.inner=InnerTubeResolver()
         self.pending=deque(maxlen=20);self.preparing=set();self.running=False
         self.prefixes=PrefixCache();self.prefixes.fragment=65536
 
@@ -145,10 +147,18 @@ class AudioRouter:
         return item
 
     def resolve(self,video_id,metadata=None):
-        return self.find(video_id,metadata) or dict(self.fallback.resolve(video_id),source='yt-dlp')
+        return self.inner.resolve(video_id) or self.cached_audius(video_id,metadata) or dict(self.fallback.resolve(video_id),source='yt-dlp')
+
+    def cached_audius(self,video_id,metadata):
+        with self.lock:cached=self.cache.get(self.key(video_id,metadata)) if metadata else None
+        return cached[1] if cached and cached[0]>time.monotonic() else None
 
     def open(self,video_id,range_header=None,metadata=None):
-        started=time.perf_counter();item=self.find(video_id,metadata)
+        started=time.perf_counter()
+        direct=self.inner.open(video_id,range_header)
+        if direct:return direct
+        # Audius preparation remains useful, but Play never launches its search.
+        item=self.cached_audius(video_id,metadata)
         if item:
             prefix=self.prefixes.get(video_id,None)
             if prefix and prefix.get('track_id')==item['track_id']:

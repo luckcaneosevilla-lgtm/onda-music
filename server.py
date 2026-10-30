@@ -318,7 +318,8 @@ class Handler(BaseHTTPRequestHandler):
             self.audio_video_id=video_id
             metadata=provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id)
             try:
-                if parse_qs(urlparse(self.path).query).get('refresh')==['1']:resolver.refresh(video_id)
+                if parse_qs(urlparse(self.path).query).get('refresh')==['1']:
+                    audio_router.inner.invalidate(video_id);resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     item=audio_router.resolve(video_id,metadata)
                     self.send(200,{'url':'/api/audio/'+video_id,'source':item['source'],'level':1,'mime':item['mime']});return
@@ -501,6 +502,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(response.status);self.headers_common(mime)
             self.send_header('X-IVOX-Audio-Level',str(level))
             if timings.get('source'):self.send_header('X-IVOX-Audio-Source',timings['source'])
+            if timings.get('client'):self.send_header('X-IVOX-Audio-Client',timings['client'])
             self.send_header('Cache-Control','private, no-store')
             self.send_header('X-Accel-Buffering','no')
             self.send_header('X-IVOX-Audio-Cache','prefix' if timings.get('prefix_hit') else 'passthrough')
@@ -541,6 +543,7 @@ class Handler(BaseHTTPRequestHandler):
             # A failed prefix continuation must not be served again on the
             # next recovery request. Client skips/disconnects keep valid cache.
             if phase=='upstream_read' and level==1 and self.audio_video_id:
+                audio_router.inner.invalidate(self.audio_video_id)
                 audio_router.prefixes.remove(self.audio_video_id)
                 resolver.invalidate(self.audio_video_id)
         finally:

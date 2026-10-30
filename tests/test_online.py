@@ -17,6 +17,9 @@ AUDIUS={'data':[{'id':'AbCd1','title':'Fixture independiente','duration':180,'is
 
 class OnlineTests(unittest.TestCase):
     def setUp(self):
+        from unittest.mock import Mock
+        inner=Mock();inner.resolve.return_value=None;inner.open.return_value=None
+        self.inner_patch=patch.object(onda.audio_router,'inner',inner);self.inner_patch.start();self.addCleanup(self.inner_patch.stop)
         self.audius_warm=patch.object(onda.audio_router,'prefetch_many');self.audius_warm.start();self.addCleanup(self.audius_warm.stop)
         self.warm=patch.object(onda.resolver,'prefetch_many');self.warm.start();self.addCleanup(self.warm.stop)
         self.temp=tempfile.TemporaryDirectory();self.original=onda.DATA;onda.DATA=Path(self.temp.name);onda.TURSO=None;onda.init()

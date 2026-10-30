@@ -18,6 +18,9 @@ def response(data,status=200,mime='application/json',location=None):
 
 
 class AudioRouterTests(unittest.TestCase):
+    def setUp(self):
+        inner=Mock();inner.resolve.return_value=None;inner.open.return_value=None
+        patcher=patch('audio_router.InnerTubeResolver',return_value=inner);patcher.start();self.addCleanup(patcher.stop)
     def test_matching_requires_same_recording_and_public_stream(self):
         self.assertTrue(AudioRouter.matches(META,TRACK))
         self.assertTrue(AudioRouter.matches(dict(META,title='Example (feat. Guest)'),dict(TRACK,title='Example (ft. Guest)')))
@@ -29,6 +32,7 @@ class AudioRouterTests(unittest.TestCase):
         fallback=Mock();router=AudioRouter(fallback);connection=Mock()
         stream=response({},206,'audio/mpeg')
         with patch('audio_router.get_response',side_effect=[(connection,response({'data':[TRACK]})),(connection,stream)]) as get:
+            router.find('abcdefghijk',META)
             self.assertEqual(router.resolve('abcdefghijk',META)['source'],'audius')
             self.assertEqual(router.open('abcdefghijk','bytes=0-100',META)[2],'audio/mpeg')
             self.assertEqual(get.call_args.args[1],{'Range':'bytes=0-100'})
@@ -40,6 +44,7 @@ class AudioRouterTests(unittest.TestCase):
             fallback=Mock();fallback.resolve.return_value={'url':'internal','mime':'audio/mp4'}
             router=AudioRouter(fallback)
             with patch('audio_router.get_response',side_effect=effect) as get:
+                router.find('abcdefghijk',META)
                 for _ in range(2):self.assertEqual(router.resolve('abcdefghijk',META)['source'],'yt-dlp')
                 self.assertEqual(get.call_count,1)
 
@@ -47,6 +52,7 @@ class AudioRouterTests(unittest.TestCase):
         fallback=Mock();fallback.open.return_value=(Mock(),response({},206,'audio/mp4'),'audio/mp4')
         router=AudioRouter(fallback);connection=Mock()
         with patch('audio_router.get_response',side_effect=[(connection,response({'data':[TRACK]})),(connection,response({},403))]):
+            router.find('abcdefghijk',META)
             self.assertEqual(router.open('abcdefghijk','bytes=0-',META)[2],'audio/mp4')
             self.assertIsNone(router.find('abcdefghijk',META))
             fallback.open.assert_called_once_with('abcdefghijk','bytes=0-')
