@@ -1,0 +1,11 @@
+﻿const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('web/online.js','utf8');
+const body=source.slice(source.indexOf('function prefetchAudio('),source.indexOf('\nfunction playerState'));
+const calls=[];const context={Date,Map,Set,proxyOnlyAudio:true,me:{},prefetched:new Map(),cachedIds:new Set(['piped:abcdefghijk']),warmMemoryAudio(){},api:(url,method,payload)=>{calls.push({url,method,payload});return Promise.resolve({})}};
+vm.createContext(context);vm.runInContext(body,context);
+const item={provider:'piped',provider_id:'abcdefghijk',id:'piped:abcdefghijk'};
+context.prefetchAudio([item]);assert.equal(calls.length,1,'iOS server warming must not be skipped for browser cache IDs');
+context.prefetchAudio([item]);assert.equal(calls.length,1,'ordinary duplicate warming stays deduplicated');
+context.prefetchAudio([item],true);assert.equal(calls.length,2,'Play must promote a recently prefetched song');
+assert.equal(calls[1].payload.priority,true);assert.equal(calls[1].payload.video_ids[0],item.provider_id);
+console.log('PASS: iOS warming, normal deduplication and explicit Play priority');

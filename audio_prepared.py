@@ -86,8 +86,8 @@ class PreparedAudioCache:
     def __init__(self,resolve,binary=None,ttl=1800,max_bytes=256*1024*1024,max_file=32*1024*1024,max_entries=24,job_timeout=40):
         self.resolve=resolve;self.binary=binary;self.ttl=ttl;self.max_bytes=max_bytes;self.max_file=max_file
         self.max_entries=max_entries;self.job_timeout=job_timeout
-        self.lock=threading.RLock();self.entries=OrderedDict();self.pending=deque(maxlen=3)
-        self.inflight=set();self.failures={};self.worker=None;self.temp=None;self.process=None
+        self.lock=threading.RLock();self.entries=OrderedDict();self.pending=deque(maxlen=8)
+        self.inflight=set();self.failures={};self.details=OrderedDict();self.worker=None;self.temp=None;self.process=None
         self.stopping=threading.Event();atexit.register(self.close)
     def _prune(self,needed=0):
         now=time.monotonic()
@@ -97,7 +97,7 @@ class PreparedAudioCache:
             try:entry['path'].unlink(missing_ok=True)
             except OSError:continue
             self.entries.pop(key,None)
-    def prefetch_many(self,items):
+    def prefetch_many(self,items,priority=False):
         selected=[]
         for item in items:
             vid=item.get('provider_id','')
@@ -110,12 +110,26 @@ class PreparedAudioCache:
         with self.lock:
             if self.stopping.is_set():return
             self._prune();now=time.monotonic();self.failures={v:t for v,t in self.failures.items() if t>now}
-            wanted={v['provider_id'] for v in selected}
-            self.pending=deque((v for v in self.pending if v['provider_id'] in wanted),maxlen=3)
-            queued={v['provider_id'] for v in self.pending}
-            for item in selected:
+            # Visibility warming must not discard jobs from the current search.
+            # A real Play/search can promote its candidates without duplicating work.
+            ordered=list(reversed(selected)) if priority else selected
+            for item in ordered:
                 vid=item['provider_id']
-                if vid not in self.entries and vid not in queued and vid not in self.inflight and vid not in self.failures:self.pending.append(item)
+                if vid in self.entries or vid in self.inflight or vid in self.failures:continue
+                queued=next((v for v in self.pending if v['provider_id']==vid),None)
+                if queued:
+                    if not priority:continue
+                    self.pending.remove(queued)
+                if len(self.pending)>=8:
+                    if not priority:continue
+                    dropped=self.pending.pop();self.details.pop(dropped['provider_id'],None)
+                if priority:self.pending.appendleft(item)
+                else:self.pending.append(item)
+                self.details[vid]={'status':'queued','stage':'queued'}
+            while len(self.details)>128:
+                removable=next((v for v in self.details if v not in self.inflight and not any(i['provider_id']==v for i in self.pending)),None)
+                if removable is None:break
+                self.details.pop(removable,None)
             if self.pending and (not self.worker or not self.worker.is_alive()):
                 self.worker=threading.Thread(target=self._work,daemon=True);self.worker.start()
     def _work(self):
@@ -124,14 +138,20 @@ class PreparedAudioCache:
                 if not self.pending:
                     self.worker=None;return
                 item=self.pending.popleft();vid=item['provider_id'];self.inflight.add(vid)
-            started=time.perf_counter();success=False
+            started=time.perf_counter();success=False;reason=None
+            self._stage(vid,'resolve')
             try:
                 self._prepare(vid,item,started);success=True
-            except (AudioUnavailable,OSError,ValueError,http.client.HTTPException,ProviderError,subprocess.SubprocessError):
-                with self.lock:self.failures[vid]=time.monotonic()+60
+            except (AudioUnavailable,OSError,ValueError,http.client.HTTPException,ProviderError,subprocess.SubprocessError) as error:
+                reason=str(error) if isinstance(error,AudioUnavailable) else type(error).__name__
+                reason=re.sub(r'[^A-Za-z0-9_]','',reason)[:60]
+                with self.lock:
+                    retry=2 if reason in ('worker_unavailable','resolution_busy') else 10 if isinstance(error,(OSError,http.client.HTTPException)) or 'timeout' in reason.lower() else 60
+                    self.failures[vid]=time.monotonic()+retry;stage=self.details.get(vid,{}).get('stage','resolve')
+                    self.details[vid]={'status':'failed','stage':stage,'reason':reason}
             finally:
                 with self.lock:self.inflight.discard(vid)
-                metric('audio_prepared',video_id=vid,success=success,prepare_ms=round((time.perf_counter()-started)*1000,2))
+                metric('audio_prepared',video_id=vid,success=success,reason=reason,prepare_ms=round((time.perf_counter()-started)*1000,2))
     def _prepare(self,vid,metadata,started):
         binary=self.binary or shutil.which('ffmpeg')
         if not binary:raise AudioUnavailable('ffmpeg_unavailable')
@@ -143,6 +163,7 @@ class PreparedAudioCache:
             directory=Path(self.temp.name)
         stem=secrets.token_hex(12);source=directory/(stem+'.input');target=directory/(stem+'.part.mp4');published=directory/(stem+'.mp4')
         try:
+            self._stage(vid,'download')
             headers={'User-Agent':resolved.get('user_agent','Mozilla/5.0')}
             for _ in range(4):
                 remaining=self.job_timeout-(time.perf_counter()-started)
@@ -174,6 +195,7 @@ class PreparedAudioCache:
             else:raise AudioUnavailable('redirect_limit')
             remaining=min(20,self.job_timeout-(time.perf_counter()-started))
             if remaining<=0:raise AudioUnavailable('preparation_timeout')
+            self._stage(vid,'encode')
             with self.lock:
                 if self.stopping.is_set():raise AudioUnavailable('preparation_cancelled')
                 process=subprocess.Popen(faststart_command(binary,source,target,self.max_file),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
@@ -193,9 +215,20 @@ class PreparedAudioCache:
                 if len(self.entries)>=self.max_entries or sum(e['size'] for e in self.entries.values())+size>self.max_bytes:raise AudioUnavailable('prepared_cache_full')
                 os.replace(target,published)
                 self.entries[vid]={'path':published,'size':size,'expires':time.monotonic()+self.ttl,'leases':0}
+                self.details[vid]={'status':'ready','stage':'ready'}
         finally:
             if connection:connection.close()
             source.unlink(missing_ok=True);target.unlink(missing_ok=True)
+    def _stage(self,vid,stage):
+        with self.lock:self.details[vid]={'status':'preparing','stage':stage}
+    def status(self,vid):
+        with self.lock:
+            entry=self.entries.get(vid)
+            if entry and entry['expires']>time.monotonic():return {'status':'ready','stage':'ready'}
+            state=self.details.get(vid)
+            if state and state['status']=='failed' and self.failures.get(vid,0)<=time.monotonic():return {'status':'missing','stage':'missing'}
+            if state and state['status']!='ready':return dict(state)
+            return {'status':'missing','stage':'missing'}
     def open(self,vid,range_header=None):
         with self.lock:
             self._prune();entry=self.entries.get(vid)

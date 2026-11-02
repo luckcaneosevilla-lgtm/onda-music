@@ -6,7 +6,7 @@ const onlineAudio=$('#online-audio');
 // never gated on canplaythrough. ResourceTiming exposes actual network timing.
 let playbackTrace=null;
 function tracePlayback(stage,extra={}){
-  const t=playbackTrace;if(!t||t.version!==playVersion||(t.marks.has(stage)&&!['waiting','stalled','error','network'].includes(stage)))return;
+  const t=playbackTrace;if(!t||t.version!==playVersion||(t.marks.has(stage)&&!['waiting','stalled','error','network','preparation'].includes(stage)))return;
   t.marks.add(stage);t.times??={};t.times[stage]??=performance.now()-t.start;
   const ahead=onlineAudio.buffered.length?Math.max(0,onlineAudio.buffered.end(onlineAudio.buffered.length-1)-onlineAudio.currentTime):0;
   const record={stage,version:t.version,elapsed_ms:Math.round(performance.now()-t.start),readyState:onlineAudio.readyState,buffer_seconds:+ahead.toFixed(3),metadata_to_playing_ms:stage==='playing'&&t.times.loadedmetadata!==undefined?Math.round(t.times.playing-t.times.loadedmetadata):undefined,...extra};
@@ -120,7 +120,7 @@ const visibleRows=new Map(),visiblePrefetch='IntersectionObserver' in window?new
 },{threshold:.6}):{observe(){},unobserve(){}};
 let visibleBatch=[],visibleTimer=0;
 function queueVisible(id){const v=videoById(id);if(!v)return;visibleBatch.push(v);clearTimeout(visibleTimer);visibleTimer=setTimeout(()=>{const batch=visibleBatch;visibleBatch=[];for(let i=0;i<batch.length;i+=5)prefetchAudio(batch.slice(i,i+5))},150)}
-function prefetchAudio(items){items.filter(Boolean).slice(0,3).forEach(warmMemoryAudio);const now=Date.now();for(const [id,until] of prefetched)if(until<=now)prefetched.delete(id);const ids=items.filter(v=>v&&v.provider==='piped'&&!prefetched.has(v.provider_id)&&!cachedIds.has(v.id)).slice(0,5).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.set(id,now+30000));api('/api/audio/prefetch','POST',{video_ids:ids}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
+function prefetchAudio(items,priority=false){items.filter(Boolean).slice(0,3).forEach(warmMemoryAudio);const now=Date.now();for(const [id,until] of prefetched)if(until<=now)prefetched.delete(id);const ids=items.filter(v=>v&&v.provider==='piped'&&(priority||!prefetched.has(v.provider_id))&&(proxyOnlyAudio||!cachedIds.has(v.id))).slice(0,5).map(v=>v.provider_id);if(!ids.length||!me)return;ids.forEach(id=>prefetched.set(id,now+30000));api('/api/audio/prefetch','POST',{video_ids:ids,priority}).catch(()=>ids.forEach(id=>prefetched.delete(id)))}
 function playerState(state){
   if(state==='loading'&&$('#online-player').dataset.state!=='loading')loadingSince=Date.now();
   $('#online-player').dataset.state=state;const playing=state==='playing';
@@ -403,6 +403,16 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
   const item=audioQueue[audioIndex];if(!item)return;const {version,signal}=beginPlayback();resumeAt=resumeFrom;
   playbackTrace={version,start:intentAt,marks:new Set(),url:null};
   tracePlayback('play_intent');
+  if(proxyOnlyAudio&&item.provider==='piped')prefetchAudio([item],true);
+  if(proxyOnlyAudio&&item.provider==='piped'){
+    const inspectPreparation=()=>{
+      if(version!==playVersion||!window.IVoxAudioDebugVisible?.())return;
+      api('/api/audio/'+item.provider_id+'?resolve=1').then(result=>{
+        if(version===playVersion&&result.prepared)tracePlayback('preparation',{prepared_status:result.prepared.status,prepared_stage:result.prepared.stage,prepared_reason:result.prepared.reason});
+      }).catch(()=>{});
+    };
+    inspectPreparation();setTimeout(inspectPreparation,3000);
+  }
   playbackWanted=autostart;
   resolutionBusy=true;activeLevel=0;recordedReference=null;
   if(onlineAudio.getAttribute('src'))onlineAudio.pause();

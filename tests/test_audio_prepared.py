@@ -66,7 +66,20 @@ class PreparedTests(unittest.TestCase):
         with patch('audio_prepared.threading.Thread') as thread:
             cache.prefetch_many([items[0],items[0],*items[1:]])
             self.assertEqual(len(cache.pending),3);thread.return_value.start.assert_called_once()
-            cache.prefetch_many(items[7:]);self.assertEqual([v['provider_id'] for v in cache.pending],[v['provider_id'] for v in items[7:]])
+            cache.prefetch_many(items[7:]);self.assertEqual([v['provider_id'] for v in cache.pending],[v['provider_id'] for v in items[:3]+items[7:]])
+            cache.prefetch_many([items[8]],priority=True);self.assertEqual(cache.pending[0]['provider_id'],items[8]['provider_id'])
+            self.assertEqual(len({v['provider_id'] for v in cache.pending}),len(cache.pending))
+            for item in items:cache.prefetch_many([item])
+            self.assertEqual(len(cache.pending),8)
+            cache.prefetch_many([items[9]],priority=True);self.assertEqual(cache.pending[0]['provider_id'],items[9]['provider_id'])
+            self.assertEqual(len(cache.pending),8)
+    def test_preparation_state_never_exposes_paths_or_urls(self):
+        cache=self.cache();self.assertEqual(cache.status(VID)['status'],'missing')
+        cache._stage(VID,'download');self.assertEqual(cache.status(VID),{'status':'preparing','stage':'download'})
+        self.prepare(cache);self.assertEqual(cache.status(VID),{'status':'ready','stage':'ready'})
+        self.assertNotIn('path',cache.status(VID));self.assertNotIn('url',cache.status(VID))
+        cache.invalidate(VID);self.assertEqual(cache.status(VID)['status'],'missing')
+
     def test_timeout_kills_encoder_and_removes_partial_files(self):
         import subprocess
         cache=self.cache()

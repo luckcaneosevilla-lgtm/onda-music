@@ -315,7 +315,7 @@ class Handler(BaseHTTPRequestHandler):
             require(u['role']=='admin','Acceso reservado a administradores.',403)
             return self.admin(c,u,path,method)
         if path=='/api/audio/prefetch' and method=='POST':
-            ids=json.loads(self.body()).get('video_ids')
+            payload=json.loads(self.body());ids=payload.get('video_ids');priority=payload.get('priority') is True
             require(isinstance(ids,list) and len(ids)<=5 and all(isinstance(v,str) for v in ids),'Datos inválidos.')
             require(all(re.fullmatch('[A-Za-z0-9_-]{11}',v) for v in ids),'Referencia inválida.')
             # Only references this account can already discover; no arbitrary warming API.
@@ -323,9 +323,10 @@ class Handler(BaseHTTPRequestHandler):
                 marks=','.join('?' for _ in ids)
                 known={row[0] for row in c.execute('SELECT video_id FROM online_catalog WHERE video_id IN ('+marks+')',tuple('piped:'+v for v in ids))}
                 ids=[v for v in ids if 'piped:'+v in known]
-            items=list(provider.metadata(c,['piped:'+v for v in ids]).values())
+            metadata=provider.metadata(c,['piped:'+v for v in ids])
+            items=[metadata['piped:'+vid] for vid in ids if 'piped:'+vid in metadata]
             audio_router.prefetch_many(items)
-            if requires_audio_proxy(self.headers.get('User-Agent','')):prepared_audio.prefetch_many(items)
+            if requires_audio_proxy(self.headers.get('User-Agent','')):prepared_audio.prefetch_many(items,priority=priority)
             self.send(202,{});return
         m=re.fullmatch(r'/api/audio/([A-Za-z0-9_-]{11})',path)
         if m and method=='GET':
@@ -337,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     ua=self.headers.get('User-Agent','')
                     item=None if requires_audio_proxy(ua) else audio_router.resolve(video_id,provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id))
-                    self.send(200,audio_route(video_id,item,ua));return
+                    self.send(200,{**audio_route(video_id,item,ua),'prepared':prepared_audio.status(video_id)});return
                 range_header=self.headers.get('Range')
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
                 response=prepared_audio.open(video_id,range_header)
@@ -419,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
             require(len(page)<=24000 and (not page or re.fullmatch('[A-Za-z0-9_=-]+',page)),'Página inválida.')
             result=provider.search(c,uid,q,page,params.get('source',['auto'])[0],params.get('filter',['songs'])[0])
             audio_router.prefetch_many(result.get('items',[]))
-            if requires_audio_proxy(self.headers.get('User-Agent','')):prepared_audio.prefetch_many(result.get('items',[]))
+            if requires_audio_proxy(self.headers.get('User-Agent','')):prepared_audio.prefetch_many(result.get('items',[]),priority=True)
             resolver.prefetch_many([v['provider_id'] for v in result.get('items',[])[:5] if v.get('provider')=='piped'])
             c.commit();self.send(200,result);return
         if path=='/api/online/charts' and method=='GET':
