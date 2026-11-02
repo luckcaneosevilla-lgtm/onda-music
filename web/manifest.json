@@ -2,6 +2,7 @@
   "id": "/",
   "name": "IVOX",
   "short_name": "IVOX",
+  "version": "3.0",
   "description": "Tu música, a tu ritmo: busca artistas, escucha canciones con radio infinita y letras sincronizadas.",
   "lang": "es",
   "dir": "ltr",

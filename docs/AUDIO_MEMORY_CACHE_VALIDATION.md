@@ -1,6 +1,8 @@
-﻿# Continuous audio and mobile diagnostics validation
+# Continuous audio and mobile diagnostics validation
 
 2026-11-02
+
+Historical investigation log. The owner subsequently confirmed faster prepared-cache playback without Error 4 on their real iPhone and approved IVOX 3.0. See PREPARED_AUDIO_CACHE.md for the released architecture and hardware confirmation; earlier pending-release decisions below are historical.
 
 The player now gives its single audio element one stable URL. A controlled service worker responds with the already downloaded 500 KiB prefix followed by the remaining bytes from the same upstream representation. There is no Blob-to-network src switch, second audio element or volume crossfade. Native byte-range requests, including Safari's initial two-byte probe and suffix requests, are supported. Continuation status, content range, total length and MIME must match before bytes are appended. Changed or rejected responses fail into the player's normal proxy retry instead of mixing representations.
 

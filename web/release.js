@@ -1,6 +1,6 @@
 // Release notice shared by existing accounts and first-time listeners.
 (() => {
-  const version='2.0',seen=new Set();
+  const version='3.0',seen=new Set();
   const mascot=`<svg class="anubis" viewBox="0 0 240 260" aria-hidden="true" fill="none">
     <ellipse cx="120" cy="242" rx="66" ry="7" fill="#d4af37" opacity=".15"/>
     <g class="anubis-body" stroke="#d4af37" stroke-width="3" stroke-linejoin="round">
@@ -27,11 +27,11 @@
   modal.innerHTML=`<button class="release-close" aria-label="Cerrar novedades">×</button>
     <div class="release-art">${mascot}<span class="release-version">IVOX ${version}</span></div>
     <div class="release-copy"><h1 id="release-title">Anubis te da la bienvenida.</h1>
-    <p id="release-description">Tu música tiene una nueva versión. Descubre lo que llega con IVOX 2.0.</p>
-    <ul><li><strong>Menos espera al pulsar Play.</strong><span>Preparamos el audio mientras exploras los resultados.</span></li>
-    <li><strong>Más caminos hacia tu música.</strong><span>Audius cuando hay una coincidencia disponible y una fuente alternativa cuando hace falta.</span></li>
-    <li><strong>Tu colección sigue contigo.</strong><span>Conservas tus favoritos, playlists y archivos.</span></li></ul>
-    <button class="primary release-start">Entrar a IVOX 2.0</button></div>`;
+    <p id="release-description">IVOX ${version} ya está aquí. Tu música, con menos espera y más por descubrir.</p>
+    <ul><li><strong>Reproducción más rápida en iPhone.</strong><span>Preparamos tu música mientras exploras los resultados.</span></li>
+    <li><strong>Artistas y radio infinita.</strong><span>Explora sus perfiles y sigue escuchando canciones relacionadas.</span></li>
+    <li><strong>Anubis, letras y gestos.</strong><span>Abre el reproductor completo, sigue la letra y cambia de canción deslizando.</span></li></ul>
+    <button class="primary release-start">Entrar a IVOX ${version}</button></div>`;
   document.body.append(modal);
   let account=null;
   const key=id=>`ivox:release:${version}:${id}`;
@@ -43,7 +43,7 @@
     const container=document.querySelector('.account');if(!container)return;
     account=String(me.id);
     if(!container.querySelector('.release-trigger')){
-      const button=document.createElement('button');button.className='release-trigger';button.textContent='IVOX 2.0';button.setAttribute('aria-label','Novedades de IVOX 2.0');
+      const button=document.createElement('button');button.className='release-trigger';button.textContent=`IVOX ${version}`;button.setAttribute('aria-label',`Novedades de IVOX ${version}`);
       button.onclick=()=>{if(!modal.open)modal.showModal()};container.prepend(button);
     }
     let dismissed=seen.has(account);try{dismissed ||= localStorage.getItem(key(account))==='seen'}catch{}

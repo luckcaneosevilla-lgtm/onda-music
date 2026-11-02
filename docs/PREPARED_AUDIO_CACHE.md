@@ -1,8 +1,8 @@
-﻿# Prepared AAC/fast-start server cache — local, not released
+# Prepared AAC/fast-start server cache - IVOX 3.0
 
 ## Release decision
 
-The user explicitly authorized pushing this implementation for validation on their real iPhone despite the Windows WebKit failures. The prepared-cache build is being released for that test. This authorization supersedes the earlier push gate; the IVOX 3.0 release announcement remains pending the user's real-device result.
+On 2026-11-02, after authorizing the prepared-cache build for real-device testing, the owner confirmed significantly faster playback and disappearance of media error 4 on Safari on their real iPhone. They explicitly approved the IVOX 3.0 release and announcement. This is user-reported hardware validation; no new numerical iPhone timing trace was supplied, so the release does not claim a universal measured latency.
 
 Playwright documents that available media codecs differ by operating system and recommends WebKit on macOS for the closest Safari media-playback experience: https://playwright.dev/docs/browsers . A Windows WebKit failure does not establish failure on the user's iPhone; it also cannot establish success there.
 
@@ -35,4 +35,9 @@ The integration probe performs a real complete download, FFmpeg re-encode, box v
 - Windows WebKit with iPhone 13 emulation, final run: media error 4 at 212, 143 and 178 ms; no loadedmetadata. Safari release gate remains false.
 - Syntax/compilation and git diff whitespace checks pass.
 
-The server does not import or enable the former real-time-remux experiment. This release uses the prepared-file cache. The existing release UI remains unchanged until real-device validation.
+The server does not import or enable the former real-time-remux experiment. This release uses the prepared-file cache. The release UI now announces IVOX 3.0 following the owner's successful real-iPhone validation.
+
+
+## IVOX 3.0 hardware confirmation
+
+The owner confirmed successful Safari playback on the real iPhone with the prepared AAC-LC/fast-start implementation and reported that the Error 4 disappeared. Earlier Windows WebKit failures above remain historical test results and did not reproduce on that device. Manifest, visible release badge, update notice and release dialog now identify IVOX 3.0; the content-derived build ID remains independent so future updates are still detected.

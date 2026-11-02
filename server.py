@@ -26,6 +26,7 @@ from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
 ROOT = Path(__file__).resolve().parent
+RELEASE_VERSION = '3.0'
 # Content-derived release ID changes automatically on every app code update.
 _release_files=sorted(list((ROOT/'web').rglob('*'))+list(ROOT.glob('*.py')))
 APP_VERSION=hashlib.sha256(b''.join(str(p.relative_to(ROOT)).encode()+p.read_bytes() for p in _release_files if p.is_file())).hexdigest()[:10]
@@ -203,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
                 if origin: require(urlparse(origin).netloc==self.headers.get('Host'),'Origen no permitido.',403)
             path=urlparse(self.path).path
             if path=='/version.json' and self.command=='GET':
-                self.send(200,{'version':APP_VERSION});return
+                self.send(200,{'version':APP_VERSION,'release':RELEASE_VERSION});return
             if not path.startswith('/api/'):
                 if path=='/admin':
                     with db() as c:
@@ -232,7 +233,7 @@ class Handler(BaseHTTPRequestHandler):
                 static_types={'boot.css':'text/css','boot.js':'text/javascript','release.js':'text/javascript','release.css':'text/css','player-controls.js':'text/javascript','app.js':'text/javascript','online.js':'text/javascript','sheet.js':'text/javascript','home.js':'text/javascript','offline.js':'text/javascript','crossfade.js':'text/javascript','sheet.css':'text/css','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
-                if filename=='index.html':raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"></head>'.encode())
+                if filename=='index.html':raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"><meta name="ivox-release" content="{RELEASE_VERSION}"></head>'.encode())
                 if filename=='service-worker.js':raw=raw.replace(b'ivox-app-shell-v26',('ivox-app-shell-'+APP_VERSION).encode())
                 self.send_response(200); self.headers_common(static_types[filename])
                 if filename=='service-worker.js': self.send_header('Service-Worker-Allowed','/')

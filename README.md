@@ -1,10 +1,16 @@
-# IVOX
+# IVOX 3.0
 
-Rendimiento de streaming: [arquitectura, métricas y resultados comprobados](docs/STREAMING_PERFORMANCE.md). Se incluyen prefetch de 500 KiB por pista, entrega progresiva con Range y caché de URLs de hasta dos horas (limitada por su firma). La prueba local obtuvo 33–39 ms hasta `playing` con prefetch; el objetivo de menos de un segundo para toda canción sin precarga sigue pendiente. No es una garantía de rendimiento en Koyeb.
+## Novedades de la versión 3.0
+
+- **Reproducción ultrarrápida en iOS:** durante la búsqueda, el backend descarga y prepara canciones con FFmpeg en AAC-LC a 128 kbps y MP4 con `+faststart`. Los archivos completos se conservan en una caché temporal y se sirven con HTTP Range. El propietario ha confirmado una reproducción mucho más rápida y la desaparición del Error 4 en Safari de su iPhone real.
+- **Búsqueda con perfiles de artistas y radio infinita:** descubre biografías, canciones populares y artistas relacionados; continúa escuchando recomendaciones al terminar tu cola.
+- **Interfaz Anubis con letras y gestos:** reproductor completo, letras sincronizadas cuando están disponibles, cola reordenable y gestos para abrir, cerrar y cambiar de canción.
+
+La caché se prepara en segundo plano y tiene límites de espacio, duración y concurrencia. Si una canción aún no está lista, se conserva el proxy como respaldo; no se garantiza un tiempo de arranque fijo para todas las canciones o redes. Detalles y pruebas: [caché AAC/fast-start](docs/PREPARED_AUDIO_CACHE.md) y [mediciones del reproductor](docs/AUDIO_MEMORY_CACHE_VALIDATION.md).
 
 Descubrimiento musical online para uso privado: búsqueda principal con **ytmusicapi / YouTube Music**, respaldo **YouTube Data API**, y reproducción con **yt-dlp**, Piped y Audius mediante **HTML5 audio**. Se conservan cuentas, biblioteca privada, administración, roles y planes. El recorrido principal ya no depende de importaciones ni de un reproductor de YouTube.
 
-**Cadena actual:** yt-dlp (audio puro) → Piped audio puro → Piped MP4 muxado con audio → Audius → error y siguiente. Los MP4 con `videoOnly=false` ya no se descartan cuando `audioStreams` está vacío. El estado comprobado de cada nivel figura en [README_SECCION_REPRODUCCION.md](README_SECCION_REPRODUCCION.md), con informes separados de las verificaciones anteriores.
+**Reproducción:** copias del dispositivo y archivos AAC preparados → proxy de audio con InnerTube y respaldo yt-dlp → Piped, si está configurado → Audius → error y siguiente. Safari/iOS utiliza el proxy del mismo origen; las URLs temporales de Google permanecen en el backend. [README_SECCION_REPRODUCCION.md](README_SECCION_REPRODUCCION.md) conserva las verificaciones de las etapas anteriores.
 
 ## Arranque en Windows
 
@@ -36,7 +42,7 @@ La barra de audio permanece al navegar. Incluye progreso, play/pausa, volumen (c
 
 - **Un solo `<audio>`** para canciones online, copias del dispositivo y archivos importados. Cada cambio de canción aborta con un `AbortController` las peticiones de la anterior; los toques rápidos en anterior/siguiente solo mueven la selección y la canción se carga 200 ms después del último toque, cancelando la descarga previa.
 - **Errores:** cadena copia local → yt-dlp → Piped (solo si hay instancia) → misma canción en Audius. Si todo falla se muestra el motivo y se salta a la siguiente; tras 3 fallos seguidos se detiene. Un vigilante trata como fallida una canción que no empieza en 15 s y reabre en el mismo segundo un audio atascado 20 s.
-- **Safari:** si la duración no coincide con la del catálogo (Safari suele duplicarla en AAC por streaming) se fuerza la lectura real con un seek a 99999 s y vuelta; la barra, los seeks y la pantalla de bloqueo usan la duración corregida. El relay responde `206 Partial Content` con `Content-Range` y siempre `Accept-Ranges: bytes`.
+- **Safari:** la versión 3.0 prioriza archivos AAC-LC/MP4 ya preparados con los metadatos al principio. El audio de red evita la interceptación del Service Worker. Si la duración nativa es incoherente, se usa la del catálogo sin buscar artificialmente al final del archivo. La caché preparada admite `206 Partial Content`, `Content-Range` y `Accept-Ranges: bytes`.
 - **Autoplay / radio infinita:** cuando quedan 1-2 canciones, el servidor pide la radio de YouTube Music (`get_watch_playlist(radio=True)`) de la última canción y añade 10 similares, marcadas «Radio». Se activa o desactiva en el reproductor completo. Cualquier canción o artista ofrece «Iniciar radio».
 - **Reproductor completo** (toca la portada o el título, o desliza hacia arriba): portada grande con el color dominante de la carátula, letras sincronizadas (`get_lyrics(timestamps=True)`; toca una línea para saltar), cola reordenable arrastrando (con dedo o con flechas del teclado), me gusta con corazones flotantes o doble toque en la portada, deslizar portada para cambiar de canción y hacia abajo para cerrar, visualizador radial opcional (Web Audio; no se ofrece en iPhone porque silenciaría el audio en segundo plano). Atajos: espacio, Mayús+←/→, L.
 
@@ -105,21 +111,21 @@ El administrador puede cambiar los límites. La cuota de playlists se comparte e
 
 La autorización se calcula en el servidor con el plan efectivo y vencimiento actual. Un proveedor de pagos futuro deberá verificar y deduplicar sus eventos y actualizar concesiones con auditoría; no hará falta cambiar las comprobaciones de acceso. `plans.features` reserva reglas para funciones futuras, sin activarlas por sí solo.
 
-## Destino de despliegue: RAW (rawhq)
+## Despliegue de IVOX 3.0
 
-El destino elegido es **RAW (rawhq), en lugar de Oracle**. El despliegue aún no se ha realizado: está pendiente que el propietario facilite la IP y el acceso al servidor. La disponibilidad, límites y condiciones del plan de alojamiento deben comprobarse en la cuenta del proveedor; este repositorio no configura facturación.
+IVOX se despliega en **Northflank** desde la rama `main`. El `Dockerfile` instala FFmpeg y el runtime de JavaScript de yt-dlp. Los cambios generan una nueva compilación y el cliente ofrece recargar cuando detecta una actualización. La versión visible es **3.0**; el identificador interno de compilación sigue cambiando con el contenido del código.
 
-Requisitos del servidor Linux:
+Para un despliegue Linux alternativo:
 
 - Python 3.12 o posterior, `pip` y entorno virtual para instalar `requirements.txt`, que incluye **yt-dlp** y **ytmusicapi** con versiones fijadas.
-- **ffmpeg** disponible en el PATH para compatibilidad de formatos y operaciones de audio que lo necesiten; no es obligatorio para cada stream directo de la versión actual.
+- **ffmpeg** disponible en el PATH para preparar la caché AAC-LC/fast-start. La reproducción de un archivo ya preparado no ejecuta FFmpeg; los fallos de preparación conservan el proxy de respaldo.
 - Git para subir/actualizar el código y **systemd** para ejecutar IVOX como servicio con usuario propio, directorio de trabajo y archivo de entorno privado.
 - **Tailscale**, conectado a la red privada del propietario. IVOX ya escucha en **`0.0.0.0:8765`**; el puerto **8765/TCP** debe ser accesible desde los dispositivos autorizados de esa red.
 - Almacenamiento persistente para SQLite, `.env` y, si se usan, archivos locales. Se debe copiar la base con IVOX detenido y conservar sus permisos privados.
 - Docker Engine y Compose si se desea mantener la instancia local de Piped como respaldo; sus puertos 8080/8081 deben permanecer internos/loopback.
 - Conectividad saliente a los proveedores musicales. Para instalar la PWA desde móviles se necesita HTTPS confiable, también al acceder por Tailscale.
 
-Cuando esté disponible la IP se prepararán los comandos de instalación, transferencia y configuración del servicio, y la conexión a Tailscale. **Por ahora solo queda documentado**: no se ha desplegado código, instalado software en RAW, unido ningún servidor a Tailscale ni modificado reglas de red externas.
+La caché preparada es temporal y local a cada proceso o réplica; sus archivos no forman parte de la biblioteca persistente. En Northflank, las credenciales y variables privadas se configuran en el servicio. Los límites y condiciones de alojamiento se administran en la cuenta del proveedor.
 
 ## Seguridad y persistencia
 
