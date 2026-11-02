@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const entries=new Map();let fetches=0;
 const cache={match:async key=>entries.get(key)?.clone(),keys:async()=>[...entries.keys()],put:async(key,value)=>entries.set(key,value)};
-const context={URL,Request,Response,Blob,AbortSignal,Map,Set,Promise,console,caches:{open:async()=>cache},fetch:async()=>{fetches++;return new Response(new Uint8Array(20000).fill(7),{headers:{'Content-Type':'audio/mpeg'}})},self:{location:{origin:'https://ivox.test'},addEventListener(){},clients:{matchAll:async()=>[]}}};
+const context={URL,Request,Response,Blob,AbortController,AbortSignal,ReadableStream,Date,Map,Set,Promise,console,caches:{open:async()=>cache},fetch:async()=>{fetches++;return new Response(new Uint8Array(20000).fill(7),{headers:{'Content-Type':'audio/mpeg'}})},self:{location:{origin:'https://ivox.test'},addEventListener(){},clients:{matchAll:async()=>[]}}};
 vm.createContext(context);vm.runInContext(fs.readFileSync('web/service-worker.js','utf8'),context);
 (async()=>{
  await vm.runInContext("savePlayed('abcdefghijk')",context);
@@ -14,5 +14,17 @@ vm.createContext(context);vm.runInContext(fs.readFileSync('web/service-worker.js
  assert.equal((await vm.runInContext("cachedAudio(request,'abcdefghijk')",context)).headers.get('Content-Length'),'5');
  context.request=new Request('https://ivox.test/api/audio/abcdefghijk',{headers:{Range:'bytes=30000-'}});
  assert.equal((await vm.runInContext("cachedAudio(request,'abcdefghijk')",context)).status,416);
- console.log('PASS: full audio persistence, cache hit without network, byte ranges, suffix ranges, 416');
+ context.prefix={id:'abcdefghijk',blob:new Blob([new Uint8Array(10000).fill(1)],{type:'audio/mpeg'}),total:20000,mime:'audio/mpeg',url:'/api/audio/abcdefghijk'};
+ assert.equal(vm.runInContext("rememberPrefix('client',prefix)",context),true);
+ context.fetch=async(url,options)=>{assert.equal(options.headers.Range,'bytes=10000-19999');return new Response(new Uint8Array(10000).fill(2),{status:206,headers:{'Content-Range':'bytes 10000-19999/20000','Content-Type':'audio/mpeg'}})};
+ context.request=new Request('https://ivox.test/api/audio/abcdefghijk?memory=1',{headers:{Range:'bytes=0-'}});
+ const stitched=await vm.runInContext("prefixResponse(request,'client','abcdefghijk')",context);
+ const bytes=new Uint8Array(await stitched.arrayBuffer());assert.equal(bytes.length,20000);assert.equal(bytes[9999],1);assert.equal(bytes[10000],2);
+ assert.equal(vm.runInContext("prefixResponse(request,'different-client','abcdefghijk')",context),null);
+ context.request=new Request('https://ivox.test/api/audio/abcdefghijk?memory=1',{headers:{Range:'bytes=0-1'}});
+ const probe=await vm.runInContext("prefixResponse(request,'client','abcdefghijk')",context);assert.equal((await probe.arrayBuffer()).byteLength,2);
+ context.fetch=async()=>new Response(new Uint8Array(20000),{headers:{'Content-Type':'audio/mpeg'}});
+ context.request=new Request('https://ivox.test/api/audio/abcdefghijk?memory=1');
+ await assert.rejects((await vm.runInContext("prefixResponse(request,'client','abcdefghijk')",context)).arrayBuffer(),/audio_representation_changed/);
+ console.log('PASS: continuous prefix + remainder, client isolation, Safari probe, rejected representation mismatch; full audio persistence, cache hit without network, byte ranges, suffix ranges, 416');
 })().catch(error=>{console.error(error);process.exitCode=1});
