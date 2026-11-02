@@ -157,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control','no-store')
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Referrer-Policy','strict-origin-when-cross-origin')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; media-src 'self' blob:; img-src 'self' data: https:; frame-src 'none'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; media-src 'self' blob: https://*.googlevideo.com; img-src 'self' data: https:; frame-src 'none'; connect-src 'self' https://*.googlevideo.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
     def body(self,limit=65536):
         size=int(self.headers.get('Content-Length','0'))
@@ -332,7 +332,7 @@ class Handler(BaseHTTPRequestHandler):
                     audio_router.inner.invalidate(video_id);resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     item=audio_router.resolve(video_id,metadata)
-                    self.send(200,{'url':'/api/audio/'+video_id,'source':item['source'],'level':1,'mime':item['mime']});return
+                    self.send(200,{'url':item['url'] if item['source']=='innertube' else '/api/audio/'+video_id,'fallback_url':'/api/audio/'+video_id,'expires':item.get('expires'),'source':item['source'],'level':1,'mime':item['mime']});return
                 range_header=self.headers.get('Range')
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
                 connection,response,mime=audio_router.open(video_id,range_header,metadata)
