@@ -7,7 +7,7 @@
     panel.hidden=!panel.hidden;render();
   }
   window.addEventListener('ivox-playback',event=>{
-    const source=event.detail,row={};for(const key of ['stage','version','elapsed_ms','readyState','buffer_seconds','engine'])if(typeof source?.[key]==='number'||typeof source?.[key]==='string')row[key]=source[key];records.push(row);if(records.length>150)records.shift();render();
+    const source=event.detail,row={};for(const key of ['stage','version','elapsed_ms','readyState','buffer_seconds','engine','ttfb_ms','request_after_play_ms','response_after_play_ms'])if(typeof source?.[key]==='number'||typeof source?.[key]==='string')row[key]=source[key];records.push(row);if(records.length>150)records.shift();render();
   });
   document.addEventListener('click',event=>{if(!event.target.closest('.logo'))return;const now=performance.now();taps=now-lastTap<1800?taps+1:1;lastTap=now;if(taps===5){event.preventDefault();event.stopImmediatePropagation();taps=0;show()}},true);
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&panel)panel.hidden=true});

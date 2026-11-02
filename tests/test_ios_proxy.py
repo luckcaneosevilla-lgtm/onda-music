@@ -1,0 +1,75 @@
+﻿import http.client
+import threading
+import time
+import unittest
+from unittest.mock import Mock,patch
+from audio_resolver import YtDlpResolver,AudioUnavailable
+from streaming import requires_audio_proxy,audio_route
+from server import Handler,OndaHTTPServer
+
+SAFARI='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15'
+CHROME='Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/140.0 Safari/537.36'
+ITEM={'source':'innertube','url':'https://r1.googlevideo.com/videoplayback?secret=not-returned-on-ios','mime':'audio/mp4','expires':9999999999}
+
+class IOSProxyTests(unittest.TestCase):
+    def test_apple_clients_receive_no_google_url_without_resolving(self):
+        for ua in (SAFARI,'Mozilla/5.0 (iPhone) Version/18.0 Mobile Safari/604.1','Mozilla/5.0 (iPad) CriOS/140 Mobile Safari/604.1','Mozilla/5.0 (iPhone) FxiOS/140 Mobile'):
+            with self.subTest(ua=ua):
+                self.assertTrue(requires_audio_proxy(ua))
+                route=audio_route('abcdefghijk',None,ua)
+                self.assertTrue(route['proxy_only']);self.assertEqual(route['url'],'/api/audio/abcdefghijk')
+                self.assertNotIn('googlevideo',str(audio_route('abcdefghijk',ITEM,ua)))
+        self.assertFalse(requires_audio_proxy(CHROME))
+        self.assertEqual(audio_route('abcdefghijk',ITEM,CHROME)['url'],ITEM['url'])
+
+    def test_resolve_endpoint_on_safari_skips_extractor(self):
+        handler=Handler.__new__(Handler)
+        handler.command='GET';handler.path='/api/audio/abcdefghijk?resolve=1'
+        handler.headers={'User-Agent':SAFARI};handler.session=Mock(return_value=({'id':'fixture'},{}));handler.send=Mock()
+        with patch('server.provider.metadata',return_value={}),patch('server.audio_router.resolve') as resolve:
+            handler.api(Mock(),'/api/audio/abcdefghijk')
+        resolve.assert_not_called()
+        self.assertEqual(handler.send.call_args.args[1]['url'],'/api/audio/abcdefghijk')
+
+    def test_extraction_does_not_queue_for_twelve_seconds(self):
+        resolver=YtDlpResolver();resolver.slot=Mock();resolver.slot.acquire.return_value=False
+        started=time.perf_counter()
+        with self.assertRaisesRegex(AudioUnavailable,'worker_unavailable'):resolver.run('abcdefghijk')
+        resolver.slot.acquire.assert_called_once_with(timeout=.2)
+        self.assertLess(time.perf_counter()-started,.1)
+        self.assertLessEqual(resolver.timeout,10)
+
+    def test_proxy_flushes_first_8k_before_upstream_finishes(self):
+        gate=threading.Event();chunks=[]
+        class Upstream:
+            status=200;ivox_timings={'source':'fixture','resolve_ms':0}
+            def getheader(self,key,default=None):return {'Content-Length':'16384','Accept-Ranges':'bytes'}.get(key,default)
+            def read(self,*args):raise AssertionError('blocking read used')
+            def read1(self,size):
+                chunks.append(size)
+                if len(chunks)==1:return b'a'*8192
+                if len(chunks)==2:
+                    if not gate.wait(3):raise OSError('client did not receive prefix')
+                    return b'b'*8192
+                return b''
+            def close(self):pass
+        upstream=Upstream()
+        class FixtureHandler(Handler):
+            def session(self,*args):return None
+            def do_GET(self):
+                self.started=time.perf_counter();self.audio_request_id='fixture';self.audio_video_id=None
+                self.relay(None,upstream,upstream,'audio/mp4',1)
+        server=OndaHTTPServer(('127.0.0.1',0),FixtureHandler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        client=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=2)
+        try:
+            started=time.perf_counter();client.request('GET','/audio');response=client.getresponse();first=response.read1(8192)
+            elapsed=time.perf_counter()-started
+            self.assertEqual(first,b'a'*8192);self.assertFalse(gate.is_set());self.assertLess(elapsed,.1)
+            self.assertEqual(response.getheader('Content-Type'),'audio/mp4')
+            gate.set();self.assertEqual(response.read(),b'b'*8192)
+            print('Local proxy first 8 KiB: %.2f ms (mock upstream already resolved)'%(elapsed*1000),flush=True)
+        finally:
+            gate.set();client.close();server.shutdown();server.server_close();thread.join(2)
+
+if __name__=='__main__':unittest.main()

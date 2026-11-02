@@ -42,7 +42,7 @@ class InnerTubeTests(unittest.TestCase):
         connection=Mock();response=Mock(status=403);response.getheader.return_value='text/plain'
         with patch('innertube_resolver.get_response',return_value=(connection,response)):
             self.assertEqual(router.open(VID,'bytes=0-')[2],'audio/mp4')
-        fallback.open.assert_called_once_with(VID,'bytes=0-');connection.close.assert_called_once()
+        fallback.open.assert_called_once_with(VID,'bytes=0-',retry=False);connection.close.assert_called_once()
         self.assertNotIn(VID,router.inner.cache)
 
     def test_timeout_returns_none_and_does_not_repeat_request(self):

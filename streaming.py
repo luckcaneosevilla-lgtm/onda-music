@@ -20,6 +20,23 @@ def metric(event, **fields):
     # Callers pass IDs/timings only: never signed URLs, cookies or tokens.
     log.info(json.dumps({'timestamp':datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds'),'event':event,**fields},separators=(',',':')))
 
+def requires_audio_proxy(user_agent):
+    """All iOS browsers use the proxy, including desktop-mode iPad Safari."""
+    ua=user_agent or ''
+    return bool(re.search(r'iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|OPiOS',ua,re.I) or
+                ('Safari/' in ua and not re.search(r'Chrome/|Chromium/|Edg/|OPR/|Android',ua)))
+
+
+def audio_route(video_id,item=None,user_agent=''):
+    proxy='/api/audio/'+video_id
+    if requires_audio_proxy(user_agent):
+        # Do not resolve here: the following audio request resolves and streams once.
+        return {'url':proxy,'fallback_url':proxy,'source':'proxy','level':1,'proxy_only':True}
+    return {'url':item['url'] if item['source']=='innertube' else proxy,
+            'fallback_url':proxy,'expires':item.get('expires'),'source':item['source'],
+            'level':1,'mime':item['mime'],'proxy_only':False}
+
+
 class PrefixCache:
     def __init__(self, limit=16*1024*1024, fragment=500*1024):
         self.limit=limit;self.fragment=fragment;self.size=0

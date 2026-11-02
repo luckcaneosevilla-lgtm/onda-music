@@ -55,7 +55,7 @@ class AudioRouterTests(unittest.TestCase):
             router.find('abcdefghijk',META)
             self.assertEqual(router.open('abcdefghijk','bytes=0-',META)[2],'audio/mp4')
             self.assertIsNone(router.find('abcdefghijk',META))
-            fallback.open.assert_called_once_with('abcdefghijk','bytes=0-')
+            fallback.open.assert_called_once_with('abcdefghijk','bytes=0-',retry=False)
             connection.close.assert_called()
 
     def test_download_flags(self):

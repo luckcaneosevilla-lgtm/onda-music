@@ -186,7 +186,7 @@ class AudioRouter:
                 # A broken stream must not be retried on every Range request.
                 key=(video_id,metadata.get('title'),metadata.get('channel'),metadata.get('duration'))
                 with self.lock:self.cache[key]=(time.monotonic()+60,None)
-        connection,response,mime=self.fallback.open(video_id,range_header)
+        connection,response,mime=self.fallback.open(video_id,range_header,retry=False)
         response.ivox_timings=getattr(response,'ivox_timings',{})
         response.ivox_timings['source']='yt-dlp'
         response.ivox_timings['router_ms']=round((time.perf_counter()-started)*1000,2)

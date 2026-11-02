@@ -28,7 +28,8 @@ class AudioUnavailable(Exception):pass
 OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[acodec^=mp4a.40.2]/bestaudio[ext=m4a]/bestaudio','noplaylist':True,'cachedir':False,'extractor_args':{'youtube':{'skip':['hls','dash']}}}
 # Python equivalents of --http-chunk-size 8M and -N 8. Extraction uses
 # download=False: these options only apply if yt-dlp itself downloads media.
-OPTIONS.update(http_chunk_size=8*1024*1024,concurrent_fragment_downloads=8)
+OPTIONS.update(http_chunk_size=8*1024*1024,concurrent_fragment_downloads=8,
+               socket_timeout=3,retries=0,extractor_retries=0)
 # One request per child. Only one YoutubeDL instance exists at a time, and its
 # context manager closes any challenge runtime before trying another profile.
 WORKER='''import copy,gc,json,re,sys
@@ -79,7 +80,7 @@ class YtDlpResolver:
     def __init__(self,size=1,recycle=None):
         # Retain constructor compatibility, but never create a process pool.
         self.cache={};self.failures={};self.failure_reasons={};self.refreshes={};self.guard=threading.Lock();self.store=None
-        self.locks={};self.timeout=20;self.slot=threading.BoundedSemaphore(1)
+        self.locks={};self.timeout=max(1,min(10,float(os.environ.get('IVOX_EXTRACT_TIMEOUT','6'))));self.slot=threading.BoundedSemaphore(1)
         self.engines={};self.standard={};self.compatible={}
         self.prefixes=PrefixCache(limit=2*1024*1024,fragment=65536)
         self.shared=None;self.cache_ttl=1800
@@ -112,7 +113,7 @@ class YtDlpResolver:
         except sqlite3.Error:pass
     def run(self,video_id,background=False):
         if background:raise AudioUnavailable('background_deferred')
-        if not self.slot.acquire(timeout=12):raise AudioUnavailable('worker_unavailable')
+        if not self.slot.acquire(timeout=.2):raise AudioUnavailable('worker_unavailable')
         process=None;started=time.perf_counter();engine='yt-dlp';url=None
         try:
             env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'};env['PYTHONIOENCODING']='utf-8'
@@ -176,7 +177,7 @@ class YtDlpResolver:
             return hit
         with self.guard:
             entry=self.locks.setdefault(video_id,[threading.Lock(),0]);entry[1]+=1
-        lock=entry[0];acquired=lock.acquire(timeout=20)
+        lock=entry[0];acquired=lock.acquire(timeout=.2)
         if not acquired:
             with self.guard:
                 entry[1]-=1
@@ -268,7 +269,9 @@ class YtDlpResolver:
         try:
             for _ in range(4):
                 if not self.allowed(url):raise AudioUnavailable()
-                connection,response=get_response(url,{'Range':range_header} if range_header else {},timeout=15)
+                remaining=3-(time.perf_counter()-resolved)
+                if remaining<=0:raise AudioUnavailable('upstream_timeout')
+                connection,response=get_response(url,{'Range':range_header} if range_header else {},timeout=remaining)
                 if response.status in (301,302,303,307,308):
                     url=urljoin(url,response.getheader('Location',''));connection.close();connection=None;continue
                 if response.status==416:return connection,response,item['mime']

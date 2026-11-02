@@ -20,7 +20,7 @@ from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
 from audio_router import audio_router
-from streaming import metric
+from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
 ROOT = Path(__file__).resolve().parent
@@ -231,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 if filename=='index.html':raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"></head>'.encode())
-                if filename=='service-worker.js':raw=raw.replace(b'ivox-app-shell-v24',('ivox-app-shell-'+APP_VERSION).encode())
+                if filename=='service-worker.js':raw=raw.replace(b'ivox-app-shell-v25',('ivox-app-shell-'+APP_VERSION).encode())
                 self.send_response(200); self.headers_common(static_types[filename])
                 if filename=='service-worker.js': self.send_header('Service-Worker-Allowed','/')
                 self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw); return
@@ -331,8 +331,9 @@ class Handler(BaseHTTPRequestHandler):
                 if parse_qs(urlparse(self.path).query).get('refresh')==['1']:
                     audio_router.inner.invalidate(video_id);resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
-                    item=audio_router.resolve(video_id,metadata)
-                    self.send(200,{'url':item['url'] if item['source']=='innertube' else '/api/audio/'+video_id,'fallback_url':'/api/audio/'+video_id,'expires':item.get('expires'),'source':item['source'],'level':1,'mime':item['mime']});return
+                    ua=self.headers.get('User-Agent','')
+                    item=None if requires_audio_proxy(ua) else audio_router.resolve(video_id,metadata)
+                    self.send(200,audio_route(video_id,item,ua));return
                 range_header=self.headers.get('Range')
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
                 connection,response,mime=audio_router.open(video_id,range_header,metadata)
@@ -508,6 +509,7 @@ class Handler(BaseHTTPRequestHandler):
     def relay(self,c,connection,response,mime,level,download=None):
         sent=0;first_byte_ms=None;outcome='complete';phase='headers'
         timings=getattr(response,'ivox_timings',{})
+        next_session_check=time.monotonic()+1
         try:
             self.send_response(response.status);self.headers_common(mime)
             self.send_header('X-IVOX-Audio-Level',str(level))
@@ -531,8 +533,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             if TRACE: print(f'[trace] audio headers {self.headers.get("Range")} {time.perf_counter()-self.started:.3f}s',flush=True)
             while True:
-                try:self.session(c)
-                except Problem:outcome='session_revoked';self.close_connection=True;break
+                if time.monotonic()>=next_session_check:
+                    try:self.session(c)
+                    except Problem:outcome='session_revoked';self.close_connection=True;break
+                    next_session_check=time.monotonic()+1
                 # HTTPResponse.read(n) waits for n bytes. read1 returns available
                 # bytes immediately, so slow upstreams cannot delay first sound
                 # merely to fill a 64 KiB server buffer.

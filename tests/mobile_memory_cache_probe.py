@@ -24,7 +24,7 @@ with sync_playwright() as p:
         else:r.fulfill(body='<audio></audio>',content_type='text/html')
     page.route('**/*',route)
     page.goto('https://fixture.test/')
-    page.evaluate('''()=>{window.me={};window.cachedIds=new Set();window.onlineAudio=document.querySelector('audio');window.api=async()=>({url:'/audio',fallback_url:'/audio',mime:'audio/wav'});window.startOnline=()=>{};window.playbackWanted=true}''')
+    page.evaluate('''()=>{window.me={};window.proxyOnlyAudio=false;window.cachedIds=new Set();window.onlineAudio=document.querySelector('audio');window.api=async()=>({url:'/audio',fallback_url:'/audio',mime:'audio/wav'});window.startOnline=()=>{};window.playbackWanted=true}''')
     page.add_script_tag(content=block)
     page.evaluate("async()=>{await warmMemoryAudio({id:'piped:abcdefghijk',provider:'piped',provider_id:'abcdefghijk'});if(memoryAudio.size!==1)throw Error('prefix missing')}")
     timings=[]

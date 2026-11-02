@@ -32,6 +32,7 @@ const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
 const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id)||window.homeLookup?.(id)||window.offlineLookup?.(id);
 const isSafari=/^((?!chrome|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
+const proxyOnlyAudio=isSafari||/iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|OPiOS/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 // YouTube Music thumbnails come at 60-120 px; the same URL serves any size.
 const bigArt=url=>String(url||'').replace(/=w\d+-h\d+/,'=w600-h600');
 // iOS/Chrome only let an element start playback from a gesture; the first touch anywhere unlocks it for later async plays.
@@ -87,15 +88,16 @@ async function warmMemoryAudio(item){
     const route=await api('/api/audio/'+item.provider_id+'?resolve=1');
     if(!me||generation!==memoryGeneration)return;
     const host=new URL(route.url,location.href);
-    if(host.hostname.endsWith('.googlevideo.com')&&!document.querySelector('link[data-audio-preconnect]')){const link=document.createElement('link');link.rel='preconnect';link.href=host.origin;link.dataset.audioPreconnect='';document.head.append(link)}
-    let response,upstream=route.url;
+    if(!proxyOnlyAudio&&host.hostname.endsWith('.googlevideo.com')&&!document.querySelector('link[data-audio-preconnect]')){const link=document.createElement('link');link.rel='preconnect';link.href=host.origin;link.dataset.audioPreconnect='';document.head.append(link)}
+    let response,upstream=proxyOnlyAudio?route.fallback_url:route.url;
     try{response=await fetch(upstream,{headers:{Range:'bytes=0-511999'},signal:AbortSignal.timeout(12000)});if(response.status!==206||!response.headers.get('Content-Range'))throw Error('direct')}catch{upstream=route.fallback_url;response=await fetch(upstream,{headers:{Range:'bytes=0-511999'},signal:AbortSignal.timeout(12000)})}
     const bounds=/^bytes 0-(\d+)\/(\d+)$/.exec(response.headers.get('Content-Range')||'');
     if(response.status!==206||!bounds||!response.headers.get('Content-Type')?.startsWith('audio/'))return;
     const reader=response.body.getReader(),parts=[];let size=0;
     try{while(size<512000){const {value,done}=await reader.read();if(done)break;const chunk=value.subarray(0,512000-size);parts.push(chunk);size+=chunk.length}}finally{await reader.cancel()}
     if(size<10000||!me||generation!==memoryGeneration)return;
-    const blob=new Blob(parts,{type:response.headers.get('Content-Type')});
+    const mime=response.headers.get('Content-Type').split(';')[0].trim().toLowerCase();
+    const blob=new Blob(parts,{type:mime});
     while(memoryAudio.size>=3){const [key,entry]=memoryAudio.entries().next().value;URL.revokeObjectURL(entry.url);memoryAudio.delete(key)}
     const entry={url:URL.createObjectURL(blob),upstream,route,expires:Date.now()+60000};
     await registerAudioPrefix(item.provider_id,entry,blob,Number(bounds[2]));
@@ -412,6 +414,7 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
     const memory=memoryAudio.get(item.id);
     if(!result&&item.provider==='piped'&&minimumLevel<=1){
       if(memory?.streamUrl&&memory.expires>Date.now()&&!freshRetried.has(item.id)){result={url:memory.streamUrl,level:1,source:'memory-stream'}}
+      else if(proxyOnlyAudio){result={url:'/api/audio/'+item.provider_id+(freshRetried.has(item.id)?'?refresh=1':''),level:1,source:'proxy'}}
       else if(!freshRetried.has(item.id)){
         const route=memory?.route?.expires*1000>Date.now()?memory.route:await api('/api/audio/'+item.provider_id+'?resolve=1','GET',undefined,{signal});
         if(version!==playVersion||!me)return;
@@ -423,7 +426,7 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
       result=await api('/api/online/play/'+encodeURIComponent(item.id).replace('%3A',':')+'?format='+format+(minimumLevel>=3?'&minimum_level=3':''),'GET',undefined,{signal});
       if(version!==playVersion||!me)return;
     }
-    activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped',innertube:'Google directo','memory-stream':'memoria continua'}[result.source]||'Audius';
+    activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped',proxy:'proxy IVOX',innertube:'Google directo','memory-stream':'memoria continua'}[result.source]||'Audius';
     if(blobUrl&&result.url!==blobUrl&&blobUrl!==window.crossfadeHold)URL.revokeObjectURL(blobUrl);
     blobUrl=result.source==='device'?result.url:null;
     onlineAudio.preload='auto';onlineAudio.autoplay=autostart;
