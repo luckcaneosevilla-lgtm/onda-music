@@ -21,7 +21,7 @@ from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
 from audio_router import audio_router
 from audio_prepared import PreparedAudioCache
-prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata))
+prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata),partial=True,max_bytes=32*1024*1024,job_timeout=8)
 from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
@@ -570,6 +570,7 @@ class Handler(BaseHTTPRequestHandler):
             # A failed prefix continuation must not be served again on the
             # next recovery request. Client skips/disconnects keep valid cache.
             if phase=='upstream_read' and level==1 and self.audio_video_id:
+                prepared_audio.invalidate(self.audio_video_id)
                 audio_router.inner.invalidate(self.audio_video_id)
                 audio_router.prefixes.remove(self.audio_video_id)
                 resolver.invalidate(self.audio_video_id)

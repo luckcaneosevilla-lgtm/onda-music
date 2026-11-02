@@ -2,7 +2,7 @@
 
 ## Novedades de la versión 3.0
 
-- **Reproducción ultrarrápida en iOS:** durante la búsqueda, el backend descarga y prepara canciones con FFmpeg en AAC-LC a 128 kbps y MP4 con `+faststart`. Los archivos completos se conservan en una caché temporal y se sirven con HTTP Range. El propietario ha confirmado una reproducción mucho más rápida y la desaparición del Error 4 en Safari de su iPhone real.
+- **Reproducción ultrarrápida en iOS:** durante la búsqueda, el backend prepara un prefijo del AAC-LC original y coloca los metadatos MP4 al principio. La caché parcial sirve el inicio y continúa con el mismo audio mediante HTTP Range, sin recodificar toda la canción ni cambiar de archivo a los 30 segundos. Esta ruta sustituye la conversión completa con FFmpeg; el propietario había confirmado la mejora inicial de AAC-LC/fast-start en Safari de su iPhone real. Detalles de la nueva ruta: [caché parcial continua](docs/PARTIAL_AUDIO_CACHE.md).
 - **Búsqueda con perfiles de artistas y radio infinita:** descubre biografías, canciones populares y artistas relacionados; continúa escuchando recomendaciones al terminar tu cola.
 - **Interfaz Anubis con letras y gestos:** reproductor completo, letras sincronizadas cuando están disponibles, cola reordenable y gestos para abrir, cerrar y cambiar de canción.
 

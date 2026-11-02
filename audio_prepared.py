@@ -83,8 +83,8 @@ class UnsatisfiedRange:
 
 
 class PreparedAudioCache:
-    def __init__(self,resolve,binary=None,ttl=1800,max_bytes=256*1024*1024,max_file=32*1024*1024,max_entries=24,job_timeout=40):
-        self.resolve=resolve;self.binary=binary;self.ttl=ttl;self.max_bytes=max_bytes;self.max_file=max_file
+    def __init__(self,resolve,binary=None,ttl=1800,max_bytes=256*1024*1024,max_file=32*1024*1024,max_entries=24,job_timeout=40,partial=False):
+        self.resolve=resolve;self.binary=binary;self.partial=partial;self.ttl=ttl;self.max_bytes=max_bytes;self.max_file=max_file
         self.max_entries=max_entries;self.job_timeout=job_timeout
         self.lock=threading.RLock();self.entries=OrderedDict();self.pending=deque(maxlen=8)
         self.inflight=set();self.failures={};self.details=OrderedDict();self.worker=None;self.temp=None;self.process=None
@@ -94,8 +94,9 @@ class PreparedAudioCache:
         for key,entry in list(self.entries.items()):
             over=sum(e['size'] for e in self.entries.values())+needed>self.max_bytes or len(self.entries)+(1 if needed else 0)>self.max_entries
             if entry['leases'] or (entry['expires']>now and not over):continue
-            try:entry['path'].unlink(missing_ok=True)
-            except OSError:continue
+            if entry.get('kind')!='partial':
+                try:entry['path'].unlink(missing_ok=True)
+                except OSError:continue
             self.entries.pop(key,None)
     def prefetch_many(self,items,priority=False):
         selected=[]
@@ -153,6 +154,7 @@ class PreparedAudioCache:
                 with self.lock:self.inflight.discard(vid)
                 metric('audio_prepared',video_id=vid,success=success,reason=reason,prepare_ms=round((time.perf_counter()-started)*1000,2))
     def _prepare(self,vid,metadata,started):
+        if self.partial:return self._prepare_partial(vid,metadata,started)
         binary=self.binary or shutil.which('ffmpeg')
         if not binary:raise AudioUnavailable('ffmpeg_unavailable')
         resolved=self.resolve(vid,metadata)
@@ -219,12 +221,29 @@ class PreparedAudioCache:
         finally:
             if connection:connection.close()
             source.unlink(missing_ok=True);target.unlink(missing_ok=True)
+    def _prepare_partial(self,vid,metadata,started):
+        from audio_partial import PartialMP4
+        resolved=self.resolve(vid,metadata)
+        # Selection already guarantees AAC-LC. Preserve its samples and prepare
+        # only the metadata/prefix instead of encoding another complete file.
+        self._stage(vid,'partial_download')
+        view=PartialMP4(resolved,deadline=started+self.job_timeout)
+        view.prepare_ms=round((time.perf_counter()-started)*1000,2)
+        lifetime=min(self.ttl,float(resolved.get('expires',time.time()+self.ttl))-time.time()-30)
+        if lifetime<=0:raise AudioUnavailable('partial_url_expired')
+        with self.lock:
+            if self.stopping.is_set():raise AudioUnavailable('preparation_cancelled')
+            self._prune(needed=view.memory_size)
+            if len(self.entries)>=self.max_entries or sum(e['size'] for e in self.entries.values())+view.memory_size>self.max_bytes:raise AudioUnavailable('prepared_cache_full')
+            self.entries[vid]={'kind':'partial','view':view,'size':view.memory_size,'expires':time.monotonic()+lifetime,'leases':0}
+            self.details[vid]={'status':'ready','stage':'ready','mode':'partial','prepare_ms':view.prepare_ms,'metadata_ms':view.metadata_ms,'prefix_bytes':len(view.prefix),'total_bytes':view.total}
+        metric('audio_partial_prepared',video_id=vid,partial_prepare_ms=view.prepare_ms,partial_metadata_ms=view.metadata_ms,partial_fetch_ms=round(view.source.fetch_ms,2),prefix_bytes=len(view.prefix),total_bytes=view.total)
     def _stage(self,vid,stage):
         with self.lock:self.details[vid]={'status':'preparing','stage':stage}
     def status(self,vid):
         with self.lock:
             entry=self.entries.get(vid)
-            if entry and entry['expires']>time.monotonic():return {'status':'ready','stage':'ready'}
+            if entry and entry['expires']>time.monotonic():return dict(self.details.get(vid,{'status':'ready','stage':'ready'}))
             state=self.details.get(vid)
             if state and state['status']=='failed' and self.failures.get(vid,0)<=time.monotonic():return {'status':'missing','stage':'missing'}
             if state and state['status']!='ready':return dict(state)
@@ -233,7 +252,8 @@ class PreparedAudioCache:
         with self.lock:
             self._prune();entry=self.entries.get(vid)
             if not entry or entry['expires']<=time.monotonic():return None
-            total=entry['size'];start=0;end=total-1
+            partial_mode=entry.get('kind')=='partial'
+            total=entry['view'].total if partial_mode else entry['size'];start=0;end=total-1
             if range_header:
                 match=re.fullmatch(r'bytes=(\d*)-(\d*)',range_header)
                 if not match or not any(match.groups()):return UnsatisfiedRange(total)
@@ -243,6 +263,10 @@ class PreparedAudioCache:
                     if int(match[2])==0:return UnsatisfiedRange(total)
                     start=max(0,total-int(match[2]))
                 if start>end or start>=total:return UnsatisfiedRange(total)
+            if partial_mode:
+                from audio_partial import PartialResponse
+                self.entries.move_to_end(vid)
+                return PartialResponse(entry['view'],start,end,bool(range_header))
             try:response=PreparedResponse(self,vid,entry,start,end,bool(range_header))
             except OSError:
                 entry['expires']=0;self._prune();return None
@@ -262,5 +286,6 @@ class PreparedAudioCache:
             except OSError:pass
         if worker and worker is not threading.current_thread():worker.join(timeout=15)
         with self.lock:
-            if (not worker or not worker.is_alive()) and not any(e['leases'] for e in self.entries.values()) and self.temp:
-                self.temp.cleanup();self.temp=None;self.entries.clear()
+            if (not worker or not worker.is_alive()) and not any(e['leases'] for e in self.entries.values()):
+                if self.temp:self.temp.cleanup();self.temp=None
+                self.entries.clear()

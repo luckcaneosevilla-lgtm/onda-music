@@ -16,7 +16,8 @@ for(const event of ['loadstart','loadedmetadata','loadeddata','canplay','playing
 onlineAudio.addEventListener('timeupdate',()=>{if(onlineAudio.currentTime>0&&!onlineAudio.paused)tracePlayback('first_progress')});
 try{new PerformanceObserver(list=>{for(const e of list.getEntries()){
   const t=playbackTrace;if(!t||e.name!==t.url||e.startTime<t.start)continue;
-  tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),response_end_ms:Math.round(e.responseEnd-t.start),body_download_ms:Math.round(e.responseEnd-e.responseStart),worker_start_ms:e.workerStart?Math.round(e.workerStart-t.start):0,encoded_bytes:e.encodedBodySize,transfer_bytes:e.transferSize,prepared_cache_hit:e.serverTiming?.some(value=>value.name==='prepared_cache_ms')?1:0,server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
+  const timing=Object.fromEntries((e.serverTiming||[]).map(value=>[value.name,value.duration]));
+  tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),response_end_ms:Math.round(e.responseEnd-t.start),body_download_ms:Math.round(e.responseEnd-e.responseStart),worker_start_ms:e.workerStart?Math.round(e.workerStart-t.start):0,encoded_bytes:e.encodedBodySize,transfer_bytes:e.transferSize,prepared_cache_hit:'prepared_cache_ms' in timing?1:0,audio_path:'partial_cache_ms' in timing?'prepared-partial':'prepared_cache_ms' in timing?'prepared-full':Object.keys(timing).length?'proxy-fallback':'unreported',partial_prepare_ms:timing.partial_prepare_ms,partial_metadata_ms:timing.partial_metadata_ms,partial_fetch_ms:timing.partial_fetch_ms,server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
 }}).observe({type:'resource',buffered:true})}catch{}
 function prepareAudioSession(){try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch{}}
 prepareAudioSession();
@@ -408,7 +409,7 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
     const inspectPreparation=()=>{
       if(version!==playVersion||!window.IVoxAudioDebugVisible?.())return;
       api('/api/audio/'+item.provider_id+'?resolve=1').then(result=>{
-        if(version===playVersion&&result.prepared)tracePlayback('preparation',{prepared_status:result.prepared.status,prepared_stage:result.prepared.stage,prepared_reason:result.prepared.reason});
+        if(version===playVersion&&result.prepared)tracePlayback('preparation',{prepared_status:result.prepared.status,prepared_stage:result.prepared.stage,prepared_reason:result.prepared.reason,prepared_mode:result.prepared.mode,partial_prepare_ms:result.prepared.mode==='partial'?result.prepared.prepare_ms:undefined,partial_metadata_ms:result.prepared.metadata_ms,prepared_prefix_bytes:result.prepared.prefix_bytes});
       }).catch(()=>{});
     };
     inspectPreparation();setTimeout(inspectPreparation,3000);

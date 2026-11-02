@@ -1,5 +1,7 @@
 # Prepared AAC/fast-start server cache - IVOX 3.0
 
+Update: the server now selects partial, byte-exact AAC/MP4 preparation rather than full-song encoding. See PARTIAL_AUDIO_CACHE.md for the current path; the complete-file implementation and measurements below are retained as the previous architecture.
+
 ## Release decision
 
 On 2026-11-02, after authorizing the prepared-cache build for real-device testing, the owner confirmed significantly faster playback and disappearance of media error 4 on Safari on their real iPhone. They explicitly approved the IVOX 3.0 release and announcement. This is user-reported hardware validation; no new numerical iPhone timing trace was supplied, so the release does not claim a universal measured latency.
