@@ -31,6 +31,16 @@ class IOSProxyTests(unittest.TestCase):
         resolve.assert_not_called()
         self.assertEqual(handler.send.call_args.args[1]['url'],'/api/audio/abcdefghijk')
 
+    def test_prepared_file_is_served_without_resolving_or_streaming_upstream(self):
+        handler=Handler.__new__(Handler);handler.command='GET';handler.path='/api/audio/abcdefghijk?native=1'
+        handler.headers={'User-Agent':SAFARI,'Range':'bytes=0-1'}
+        handler.session=Mock(return_value=({'id':'fixture'},{}));handler.relay=Mock();handler.download_name=Mock(return_value=None)
+        response=Mock()
+        with patch('server.provider.metadata',return_value={}) as metadata,patch('server.prepared_audio.open',return_value=response) as prepared,patch('server.audio_router.open') as upstream,patch('server.audio_router.resolve') as resolve:
+            handler.api(Mock(),'/api/audio/abcdefghijk')
+        prepared.assert_called_once_with('abcdefghijk','bytes=0-1');metadata.assert_not_called();upstream.assert_not_called();resolve.assert_not_called()
+        self.assertEqual(handler.relay.call_args.args[1:4],(response,response,'audio/mp4'))
+
     def test_extraction_does_not_queue_for_twelve_seconds(self):
         resolver=YtDlpResolver();resolver.slot=Mock();resolver.slot.acquire.return_value=False
         started=time.perf_counter()

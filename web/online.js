@@ -16,7 +16,7 @@ for(const event of ['loadstart','loadedmetadata','loadeddata','canplay','playing
 onlineAudio.addEventListener('timeupdate',()=>{if(onlineAudio.currentTime>0&&!onlineAudio.paused)tracePlayback('first_progress')});
 try{new PerformanceObserver(list=>{for(const e of list.getEntries()){
   const t=playbackTrace;if(!t||e.name!==t.url||e.startTime<t.start)continue;
-  tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),response_end_ms:Math.round(e.responseEnd-t.start),body_download_ms:Math.round(e.responseEnd-e.responseStart),worker_start_ms:e.workerStart?Math.round(e.workerStart-t.start):0,encoded_bytes:e.encodedBodySize,transfer_bytes:e.transferSize,server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
+  tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),response_end_ms:Math.round(e.responseEnd-t.start),body_download_ms:Math.round(e.responseEnd-e.responseStart),worker_start_ms:e.workerStart?Math.round(e.workerStart-t.start):0,encoded_bytes:e.encodedBodySize,transfer_bytes:e.transferSize,prepared_cache_hit:e.serverTiming?.some(value=>value.name==='prepared_cache_ms')?1:0,server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
 }}).observe({type:'resource',buffered:true})}catch{}
 function prepareAudioSession(){try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch{}}
 prepareAudioSession();

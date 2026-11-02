@@ -20,6 +20,8 @@ from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
 from audio_router import audio_router
+from audio_prepared import PreparedAudioCache
+prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata))
 from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
@@ -320,23 +322,29 @@ class Handler(BaseHTTPRequestHandler):
                 marks=','.join('?' for _ in ids)
                 known={row[0] for row in c.execute('SELECT video_id FROM online_catalog WHERE video_id IN ('+marks+')',tuple('piped:'+v for v in ids))}
                 ids=[v for v in ids if 'piped:'+v in known]
-            audio_router.prefetch_many(list(provider.metadata(c,['piped:'+v for v in ids]).values()))
+            items=list(provider.metadata(c,['piped:'+v for v in ids]).values())
+            audio_router.prefetch_many(items)
+            if requires_audio_proxy(self.headers.get('User-Agent','')):prepared_audio.prefetch_many(items)
             self.send(202,{});return
         m=re.fullmatch(r'/api/audio/([A-Za-z0-9_-]{11})',path)
         if m and method=='GET':
             video_id=m[1]
             self.audio_video_id=video_id
-            metadata=provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id)
             try:
                 if parse_qs(urlparse(self.path).query).get('refresh')==['1']:
-                    audio_router.inner.invalidate(video_id);resolver.refresh(video_id)
+                    prepared_audio.invalidate(video_id);audio_router.inner.invalidate(video_id);resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     ua=self.headers.get('User-Agent','')
-                    item=None if requires_audio_proxy(ua) else audio_router.resolve(video_id,metadata)
+                    item=None if requires_audio_proxy(ua) else audio_router.resolve(video_id,provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id))
                     self.send(200,audio_route(video_id,item,ua));return
                 range_header=self.headers.get('Range')
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
-                connection,response,mime=audio_router.open(video_id,range_header,metadata)
+                response=prepared_audio.open(video_id,range_header)
+                if response is not None:
+                    connection=response;mime='audio/mp4'
+                else:
+                    metadata=provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id)
+                    connection,response,mime=audio_router.open(video_id,range_header,metadata)
             except AudioUnavailable as error:
                 # The reason (e.g. upstream_403: YouTube refused this server's IP) is safe to show.
                 reason=re.sub(r'[^A-Za-z0-9_]','',str(error))[:40]
@@ -410,6 +418,7 @@ class Handler(BaseHTTPRequestHandler):
             require(len(page)<=24000 and (not page or re.fullmatch('[A-Za-z0-9_=-]+',page)),'Página inválida.')
             result=provider.search(c,uid,q,page,params.get('source',['auto'])[0],params.get('filter',['songs'])[0])
             audio_router.prefetch_many(result.get('items',[]))
+            if requires_audio_proxy(self.headers.get('User-Agent','')):prepared_audio.prefetch_many(result.get('items',[]))
             resolver.prefetch_many([v['provider_id'] for v in result.get('items',[])[:5] if v.get('provider')=='piped'])
             c.commit();self.send(200,result);return
         if path=='/api/online/charts' and method=='GET':
