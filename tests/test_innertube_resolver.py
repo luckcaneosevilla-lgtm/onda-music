@@ -45,6 +45,11 @@ class InnerTubeTests(unittest.TestCase):
         fallback.open.assert_called_once_with(VID,'bytes=0-',retry=False);connection.close.assert_called_once()
         self.assertNotIn(VID,router.inner.cache)
 
+    def test_webm_and_he_aac_are_not_selected_as_mp4(self):
+        for mime,itag in [('audio/webm; codecs="opus"',251),('audio/mp4; codecs="mp4a.40.5"',139)]:
+            data=payload(streamingData={'adaptiveFormats':[{'url':URL,'mimeType':mime,'itag':itag}]})
+            self.assertIsNone(InnerTubeResolver.select(data,VID))
+
     def test_timeout_returns_none_and_does_not_repeat_request(self):
         resolver=InnerTubeResolver();connection=Mock();connection.request.side_effect=TimeoutError()
         with patch('innertube_resolver.http.client.HTTPSConnection',return_value=connection):

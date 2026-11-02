@@ -231,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 if filename=='index.html':raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"></head>'.encode())
-                if filename=='service-worker.js':raw=raw.replace(b'ivox-app-shell-v25',('ivox-app-shell-'+APP_VERSION).encode())
+                if filename=='service-worker.js':raw=raw.replace(b'ivox-app-shell-v26',('ivox-app-shell-'+APP_VERSION).encode())
                 self.send_response(200); self.headers_common(static_types[filename])
                 if filename=='service-worker.js': self.send_header('Service-Worker-Allowed','/')
                 self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw); return

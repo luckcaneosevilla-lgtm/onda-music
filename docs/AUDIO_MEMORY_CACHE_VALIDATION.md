@@ -31,3 +31,23 @@ Implementation references: https://web.dev/articles/sw-range-requests and https:
 - Prefix Blob MIME is taken from the actual audio response, trimmed and normalized to lowercase. MP4/AAC responses remain `audio/mp4`; other formats are not relabeled as AAC. No `decodeAudioData` predecode is added: the API requires complete files, and its decoded buffer would not be reused by the existing HTML audio element. See https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData . The elapsed interval from metadata to playing alone does not isolate decoder time.
 - Local HTTP regression: the actual Handler relay delivered its first 8 KiB before allowing the mocked upstream to finish, in 2-17 ms across runs. This proves incremental forwarding with an already resolved upstream; it does not establish a 100 ms cold Google extraction or Northflank/iPhone TTFB.
 - 4 Safari/proxy tests (including the actual resolve handler bypass), 18 resolver tests, 8 router tests and 9 prefix-streaming tests pass. The worker byte-range checks and Pixel 7 Chromium continuity fixture also pass (one source load, no waits after playing; 1330 ms initial startup in this run). Real iPhone/production measurements remain necessary after deployment.
+
+## Native Safari startup path (2026-11-02)
+
+User-provided iPhone timings: first reported response at 278 ms, metadata at 1011 ms, loadeddata at 1056 ms and playing at 1058 ms. The metadata-to-playing interval is 47 ms; the earlier 733 ms gap is not isolated decoder latency. Safari range probes, media parsing, downloading and scheduling can all contribute. The previous logger suppressed every network entry after the first, hiding subsequent Resource Timing entries for the same source.
+
+Changes:
+
+- Safari audio fetch events return without respondWith, before any Cache API read or Blob/range reconstruction. The frontend uses the same-origin proxy with `?native=1`; that flag also bypasses audio interception on other engines and older worker versions already ignore it. Same-origin requests need no CORS permission headers.
+- Safari no longer creates speculative prefix Blobs or uses memory-stream URLs. It still warms server-side resolvers, retains explicit complete offline downloads, and can play existing complete device copies. Automatic full-song background cache downloads are disabled on Safari to avoid competing with playback. Explicit offline downloads remain available.
+- Primary YouTube selection requires AAC-LC in an MP4/M4A container. WebM and HE-AAC/itag 139 are rejected, including stale persisted fallback URLs. The upstream response must advertise audio/mp4 (or the fallback's previously validated MP4 URL may use application/octet-stream). No WebM bytes are relabeled as MP4. Tracks without a compatible primary format can use the existing alternative-source chain or fail sooner.
+- preload=auto and playsinline were already present. play() was already called immediately after src assignment, before metadata/data events; the implementation preserves that user-gesture path and logs play_called. Delaying play to loadedmetadata would not improve it.
+- Removed the unused AudioContext resume/close cycle from first interaction. Playback uses native HTML media and does not benefit from creating and destroying a separate graph during startup.
+- Debug retains all reported network entries, response end, download duration, worker start, byte counts and metadata-to-playing interval. Signed URLs remain excluded from the panel.
+
+Validation:
+
+- `node tests/service_worker_audio_check.cjs` verifies no respondWith for Safari audio or native=1, plus existing continuous-response/range cases.
+- 20 resolver, 4 iOS proxy, 8 router and 9 streaming tests pass (41 Python tests). JavaScript syntax and whitespace checks pass.
+- `python tests/native_audio_ab_probe.py`: generated AAC-LC audio in faststart MP4, 200 ms simulated origin delay, actual service-worker contexts. Chromium with an iPhone user-agent/viewport produced native playing at 349 and 231 ms; previous prefix-worker mode produced 26 and 27 ms with prefix bytes already downloaded. This does NOT show a Safari improvement or prove the bypass is faster universally; cached prefix mode remains on other engines.
+- The same A/B using `--webkit` reported canPlayType=probably but failed with media error 4 for both native and prefix modes (four attempts). No valid WebKit playing latency or real-iPhone result is available. The sub-500 ms iPhone goal remains unverified. Reload after deployment and collect the new proxy-native/play_called/network/loadedmetadata/playing records on the real device.

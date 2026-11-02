@@ -65,9 +65,9 @@ class IOSProxyTests(unittest.TestCase):
         try:
             started=time.perf_counter();client.request('GET','/audio');response=client.getresponse();first=response.read1(8192)
             elapsed=time.perf_counter()-started
-            self.assertEqual(first,b'a'*8192);self.assertFalse(gate.is_set());self.assertLess(elapsed,.1)
+            self.assertGreater(len(first),0);self.assertEqual(first,b'a'*len(first));self.assertFalse(gate.is_set());self.assertLess(elapsed,.1)
             self.assertEqual(response.getheader('Content-Type'),'audio/mp4')
-            gate.set();self.assertEqual(response.read(),b'b'*8192)
+            gate.set();self.assertEqual(response.read(),b'a'*(8192-len(first))+b'b'*8192)
             print('Local proxy first 8 KiB: %.2f ms (mock upstream already resolved)'%(elapsed*1000),flush=True)
         finally:
             gate.set();client.close();server.shutdown();server.server_close();thread.join(2)

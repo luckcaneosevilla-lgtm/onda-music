@@ -93,7 +93,8 @@ class InnerTubeResolver:
         if data.get('playabilityStatus',{}).get('status')!='OK':return None
         if data.get('videoDetails',{}).get('videoId')!=video_id:return None
         candidates=[f for f in data.get('streamingData',{}).get('adaptiveFormats',[])
-                    if isinstance(f,dict) and f.get('mimeType','').startswith(('audio/mp4','audio/webm'))
+                    if isinstance(f,dict) and f.get('mimeType','').startswith('audio/mp4')
+                    and (f.get('itag')==140 or 'mp4a.40.2' in f.get('mimeType',''))
                     and isinstance(f.get('url'),str) and len(f['url'])<=8192
                     and YtDlpResolver.allowed(f['url']) and f.get('itag')!=139]
         # Preserve AAC-LC for Safari; never choose HE-AAC's incorrect duration.
@@ -165,7 +166,7 @@ class InnerTubeResolver:
                 if response.status in (301,302,303,307,308):
                     url=urljoin(url,response.getheader('Location',''));connection.close();connection=None;continue
                 mime=response.getheader('Content-Type','').split(';')[0]
-                if response.status==416 or (response.status in (200,206) and mime.startswith('audio/')):
+                if response.status==416 or (response.status in (200,206) and mime=='audio/mp4'):
                     response.ivox_timings={'source':'innertube','resolve_ms':round((resolved-started)*1000,2),
                                           'upstream_headers_ms':round((time.perf_counter()-resolved)*1000,2),'prefix_hit':False,'client':item.get('client','ANDROID_VR')}
                     self.preferred=item.get('client','ANDROID_VR')

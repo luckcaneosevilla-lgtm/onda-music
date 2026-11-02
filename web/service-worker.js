@@ -1,4 +1,4 @@
-const CACHE = 'ivox-app-shell-v25';
+const CACHE = 'ivox-app-shell-v26';
 const SHELL = ['/', '/index.html', '/style.css', '/online.css', '/player.css', '/sheet.css',
   '/app.js', '/player-controls.js', '/online.js', '/sheet.js', '/home.js', '/offline.js', '/crossfade.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav',
   '/fonts/cinzel.woff2', '/fonts/inter.woff2', '/release.css', '/release.js', '/boot.css', '/boot.js'];
@@ -88,11 +88,16 @@ function prefixResponse(request,client,id){
 self.addEventListener('message',event=>{
   if(event.data?.type==='audio-prefix'&&event.source?.id)event.ports[0]?.postMessage({ready:rememberPrefix(event.source.id,event.data)});
   if(event.data?.type==='clear-audio-prefixes')for(const key of audioPrefixes.keys())if(key.startsWith(event.source?.id+':'))audioPrefixes.delete(key);
-  if(event.data?.type==='cache-played-audio'&&/^[A-Za-z0-9_-]{11}$/.test(event.data.id))event.waitUntil(savePlayed(event.data.id));
+  if(event.data?.type==='cache-played-audio'&&event.data.native!==true&&/^[A-Za-z0-9_-]{11}$/.test(event.data.id))event.waitUntil(savePlayed(event.data.id));
 });
 self.addEventListener('fetch', event => {
   const request = event.request, url = new URL(request.url);
   const audio=url.origin===self.location.origin&&audioPath.exec(url.pathname);
+  // No respondWith: let Safari's native media stack issue its own Range probes.
+  // The explicit flag also works while an older app shell is controlling this tab.
+  const ua=self.navigator?.userAgent||'';
+  const apple=/iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua)||(/Safari\//.test(ua)&&!/Chrome\/|Chromium\/|Edg\/|OPR\/|Android/.test(ua));
+  if(audio&&(apple||url.searchParams.get('native')==='1'))return;
   if(request.method==='GET'&&audio&&(!url.search||url.search==='?memory=1')){
     event.respondWith((async()=>{const hit=await cachedAudio(request,audio[1]);if(hit)return hit;
       if(url.search==='?memory=1'){const response=prefixResponse(request,event.clientId,audio[1]);if(response)return response;return fetch(new Request(url.origin+url.pathname,request))}

@@ -1,9 +1,17 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const entries=new Map();let fetches=0;
+const entries=new Map();let fetches=0;const listeners={};
 const cache={match:async key=>entries.get(key)?.clone(),keys:async()=>[...entries.keys()],put:async(key,value)=>entries.set(key,value)};
-const context={URL,Request,Response,Blob,AbortController,AbortSignal,ReadableStream,Date,Map,Set,Promise,console,caches:{open:async()=>cache},fetch:async()=>{fetches++;return new Response(new Uint8Array(20000).fill(7),{headers:{'Content-Type':'audio/mpeg'}})},self:{location:{origin:'https://ivox.test'},addEventListener(){},clients:{matchAll:async()=>[]}}};
+const context={URL,Request,Response,Blob,AbortController,AbortSignal,ReadableStream,Date,Map,Set,Promise,console,caches:{open:async()=>cache},fetch:async()=>{fetches++;return new Response(new Uint8Array(20000).fill(7),{headers:{'Content-Type':'audio/mpeg'}})},self:{location:{origin:'https://ivox.test'},addEventListener(type,listener){listeners[type]=listener},clients:{matchAll:async()=>[]}}};
 vm.createContext(context);vm.runInContext(fs.readFileSync('web/service-worker.js','utf8'),context);
 (async()=>{
+ let intercepted=0;
+ context.self.navigator={userAgent:'Mozilla/5.0 (iPhone) Version/18 Safari/604.1'};
+ listeners.fetch({request:new Request('https://ivox.test/api/audio/abcdefghijk?memory=1'),respondWith(){intercepted++}});
+ assert.equal(intercepted,0,'Safari audio must bypass respondWith');
+ context.self.navigator={userAgent:'Chrome/140 Safari/537.36'};
+ listeners.fetch({request:new Request('https://ivox.test/api/audio/abcdefghijk?native=1'),respondWith(){intercepted++}});
+ assert.equal(intercepted,0,'Native flag must bypass respondWith');
+
  await vm.runInContext("savePlayed('abcdefghijk')",context);
  assert.equal(fetches,1);assert.equal(entries.size,1);
  await vm.runInContext("savePlayed('abcdefghijk')",context);assert.equal(fetches,1);

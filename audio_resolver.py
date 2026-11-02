@@ -25,7 +25,7 @@ class AudioUnavailable(Exception):pass
 # m4a first: Safari/iOS plays AAC everywhere; HLS/DASH manifests are never used and cost ~0.4 s.
 # Plain AAC-LC (itag 140) before any other m4a: Safari reports HE-AAC (139, mp4a.40.5) at
 # about twice its length, so the song ends and minutes of silence follow.
-OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[acodec^=mp4a.40.2]/bestaudio[ext=m4a]/bestaudio','noplaylist':True,'cachedir':False,'extractor_args':{'youtube':{'skip':['hls','dash']}}}
+OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[ext=m4a][acodec^=mp4a.40.2]','noplaylist':True,'cachedir':False,'extractor_args':{'youtube':{'skip':['hls','dash']}}}
 # Python equivalents of --http-chunk-size 8M and -N 8. Extraction uses
 # download=False: these options only apply if yt-dlp itself downloads media.
 OPTIONS.update(http_chunk_size=8*1024*1024,concurrent_fragment_downloads=8,
@@ -162,7 +162,7 @@ class YtDlpResolver:
     @staticmethod
     def reusable(url):
         # URLs saved before AAC-LC was preferred may point at HE-AAC (itag 139): resolve again.
-        return YtDlpResolver.allowed(url) and parse_qs(urlparse(url).query).get('itag',[''])[0]!='139'
+        return YtDlpResolver.allowed(url) and parse_qs(urlparse(url).query).get('itag',[''])[0]!='139' and parse_qs(urlparse(url).query).get('mime',[''])[0]=='audio/mp4'
     @staticmethod
     def allowed(url):
         try:
@@ -194,7 +194,7 @@ class YtDlpResolver:
                 url=self.run(video_id,background)
                 if not url or not self.allowed(url):raise AudioUnavailable('invalid_stream_url')
                 params=parse_qs(urlparse(url).query);mime=params.get('mime',['audio/webm'])[0]
-                if not mime.startswith('audio/'):raise AudioUnavailable('invalid_stream_type')
+                if mime!='audio/mp4' or not self.reusable(url):raise AudioUnavailable('invalid_stream_type')
                 expiry=time.time()+self.cache_ttl
                 try:expiry=min(expiry,int(params.get('expire',[expiry+120])[0])-120)
                 except (ValueError,TypeError):pass
@@ -277,7 +277,7 @@ class YtDlpResolver:
                 if response.status==416:return connection,response,item['mime']
                 mime=response.getheader('Content-Type','').split(';')[0]
                 if response.status not in (200,206):raise AudioUnavailable(f'upstream_{response.status}')
-                if not (mime.startswith('audio/') or mime=='application/octet-stream'):raise AudioUnavailable('upstream_type')
+                if mime not in ('audio/mp4','application/octet-stream'):raise AudioUnavailable('upstream_type')
                 response.ivox_timings={'resolve_ms':round((resolved-started)*1000,2),'upstream_headers_ms':round((time.perf_counter()-resolved)*1000,2),'prefix_hit':False}
                 return connection,response,mime if mime.startswith('audio/') else item['mime']
             raise AudioUnavailable()

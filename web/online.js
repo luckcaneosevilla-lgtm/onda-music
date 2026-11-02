@@ -6,17 +6,17 @@ const onlineAudio=$('#online-audio');
 // never gated on canplaythrough. ResourceTiming exposes actual network timing.
 let playbackTrace=null;
 function tracePlayback(stage,extra={}){
-  const t=playbackTrace;if(!t||t.version!==playVersion||(t.marks.has(stage)&&!['waiting','stalled','error'].includes(stage)))return;
-  t.marks.add(stage);
+  const t=playbackTrace;if(!t||t.version!==playVersion||(t.marks.has(stage)&&!['waiting','stalled','error','network'].includes(stage)))return;
+  t.marks.add(stage);t.times??={};t.times[stage]??=performance.now()-t.start;
   const ahead=onlineAudio.buffered.length?Math.max(0,onlineAudio.buffered.end(onlineAudio.buffered.length-1)-onlineAudio.currentTime):0;
-  const record={stage,version:t.version,elapsed_ms:Math.round(performance.now()-t.start),readyState:onlineAudio.readyState,buffer_seconds:+ahead.toFixed(3),...extra};
+  const record={stage,version:t.version,elapsed_ms:Math.round(performance.now()-t.start),readyState:onlineAudio.readyState,buffer_seconds:+ahead.toFixed(3),metadata_to_playing_ms:stage==='playing'&&t.times.loadedmetadata!==undefined?Math.round(t.times.playing-t.times.loadedmetadata):undefined,...extra};
   console.info('[IVOX playback]',record);window.dispatchEvent(new CustomEvent('ivox-playback',{detail:record}));
 }
 for(const event of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','error'])onlineAudio.addEventListener(event,()=>tracePlayback(event));
 onlineAudio.addEventListener('timeupdate',()=>{if(onlineAudio.currentTime>0&&!onlineAudio.paused)tracePlayback('first_progress')});
 try{new PerformanceObserver(list=>{for(const e of list.getEntries()){
   const t=playbackTrace;if(!t||e.name!==t.url||e.startTime<t.start)continue;
-  tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
+  tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),response_end_ms:Math.round(e.responseEnd-t.start),body_download_ms:Math.round(e.responseEnd-e.responseStart),worker_start_ms:e.workerStart?Math.round(e.workerStart-t.start):0,encoded_bytes:e.encodedBodySize,transfer_bytes:e.transferSize,server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
 }}).observe({type:'resource',buffered:true})}catch{}
 function prepareAudioSession(){try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch{}}
 prepareAudioSession();
@@ -38,7 +38,8 @@ const bigArt=url=>String(url||'').replace(/=w\d+-h\d+/,'=w600-h600');
 // iOS/Chrome only let an element start playback from a gesture; the first touch anywhere unlocks it for later async plays.
 function unlockAudio(event){
   ['click','touchend','keydown'].forEach(t=>document.removeEventListener(t,unlockAudio,true));
-  try{const Context=window.AudioContext||window.webkitAudioContext;if(Context){const context=new Context();context.resume().then(()=>context.close()).catch(()=>{})}}catch{}
+  // This app uses native media, not a Web Audio graph. Creating and closing
+  // a second context here can reconfigure the audio device during first Play.
   // A direct Play already supplies the browser gesture. Do not replace its
   // source with the unlock sound in the capture phase of that same click.
   const action=event?.target?.closest('[data-online-play],#np-toggle,#sheet-toggle,[data-queue-play]');
@@ -79,7 +80,7 @@ async function registerAudioPrefix(id,entry,blob,total){
   if(await ready)entry.streamUrl='/api/audio/'+id+'?memory=1';
 }
 async function warmMemoryAudio(item){
-  if(!me||item.provider!=='piped'||warmingAudio.has(item.id)||cachedIds.has(item.id))return;
+  if(proxyOnlyAudio||!me||item.provider!=='piped'||warmingAudio.has(item.id)||cachedIds.has(item.id))return;
   const previous=memoryAudio.get(item.id);if(previous?.expires>Date.now())return;
   if(previous){URL.revokeObjectURL(previous.url);memoryAudio.delete(item.id)}
   if(warmingAudio.size>=3)return;
@@ -413,8 +414,8 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
     if(!result&&minimumLevel<=1&&cachedIds.has(item.id)){const local=await localAudio(item);if(version!==playVersion||!me){if(local)URL.revokeObjectURL(local);return}if(local)result={url:local,level:0,source:'device'}}
     const memory=memoryAudio.get(item.id);
     if(!result&&item.provider==='piped'&&minimumLevel<=1){
-      if(memory?.streamUrl&&memory.expires>Date.now()&&!freshRetried.has(item.id)){result={url:memory.streamUrl,level:1,source:'memory-stream'}}
-      else if(proxyOnlyAudio){result={url:'/api/audio/'+item.provider_id+(freshRetried.has(item.id)?'?refresh=1':''),level:1,source:'proxy'}}
+      if(!proxyOnlyAudio&&memory?.streamUrl&&memory.expires>Date.now()&&!freshRetried.has(item.id)){result={url:memory.streamUrl,level:1,source:'memory-stream'}}
+      else if(proxyOnlyAudio){result={url:'/api/audio/'+item.provider_id+'?native=1'+(freshRetried.has(item.id)?'&refresh=1':''),level:1,source:'proxy-native'}}
       else if(!freshRetried.has(item.id)){
         const route=memory?.route?.expires*1000>Date.now()?memory.route:await api('/api/audio/'+item.provider_id+'?resolve=1','GET',undefined,{signal});
         if(version!==playVersion||!me)return;
@@ -426,13 +427,14 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
       result=await api('/api/online/play/'+encodeURIComponent(item.id).replace('%3A',':')+'?format='+format+(minimumLevel>=3?'&minimum_level=3':''),'GET',undefined,{signal});
       if(version!==playVersion||!me)return;
     }
-    activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped',proxy:'proxy IVOX',innertube:'Google directo','memory-stream':'memoria continua'}[result.source]||'Audius';
+    activeLevel=result.level??4;activeEngine={device:'este dispositivo',local:'tus archivos','yt-dlp':'yt-dlp',piped:'Piped',proxy:'proxy IVOX','proxy-native':'proxy nativo IVOX',innertube:'Google directo','memory-stream':'memoria continua'}[result.source]||'Audius';
     if(blobUrl&&result.url!==blobUrl&&blobUrl!==window.crossfadeHold)URL.revokeObjectURL(blobUrl);
     blobUrl=result.source==='device'?result.url:null;
     onlineAudio.preload='auto';onlineAudio.autoplay=autostart;
     playbackTrace.url=new URL(result.url,location.href).href;
     tracePlayback('source_assigned',{engine:result.source});onlineAudio.src=result.url;resolutionBusy=false;if(directPlayback)armWatchdog(version,4000);
     if(!autostart){clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
+    tracePlayback('play_called');
     try{await onlineAudio.play()}catch(e){if(version!==playVersion||e.name==='AbortError')return;if(e.name==='NotAllowedError'){playbackWanted=false;clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel(version)}
   }catch(e){if(version!==playVersion||e.name==='AbortError'||!me)return;resolutionBusy=false;retryAudioLevel(version)}
 }
@@ -564,7 +566,7 @@ function recoverCurrent(){
   armWatchdog(version,8000);return true;
 }
 navigator.serviceWorker?.addEventListener('message',event=>{if(event.data?.type==='audio-cached')cachedIds.add(event.data.id)});
-onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;if(current.provider==='piped')navigator.serviceWorker?.controller?.postMessage({type:'cache-played-audio',id:current.provider_id});const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).then(r=>{if(version===playVersion&&r?.duration>0){current.duration=r.duration;progress(onlineAudio.currentTime,trackDuration())}}).catch(()=>{})}};
+onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onlineAudio.getAttribute('src')==='/silence.wav'||onlineAudio.paused||onlineAudio.readyState<2)return;playbackWanted=true;audioUnlocked=true;failStreak=0;clearTimeout(watchdog);clearStall();playerState('playing');$('#playback-status').textContent=activeLevel===0?(current.provider==='local'?'Reproduciendo tus archivos':'Reproduciendo al instante desde este dispositivo'):'Reproduciendo · '+activeEngine+' · Nivel '+activeLevel;if(recordedReference!==current.id){recordedReference=current.id;if(current.provider==='piped'&&!proxyOnlyAudio)navigator.serviceWorker?.controller?.postMessage({type:'cache-played-audio',id:current.provider_id});const version=playVersion;setTimeout(()=>{if(version===playVersion)prefetchAudio(audioQueue.slice(audioIndex+1,audioIndex+2))},5000);ensureRadio();if(current.provider!=='local')api('/api/online/items/'+current.id,'PATCH',{played:true}).then(r=>{if(version===playVersion&&r?.duration>0){current.duration=r.duration;progress(onlineAudio.currentTime,trackDuration())}}).catch(()=>{})}};
 // The last seconds of a song. Safari can stop there without 'ended' (a failed last range
 // request of the stream, or a catalogue length a little longer than the audio): that is the end.
 const nearTrackEnd=(margin=3)=>{const total=trackDuration();return total>0&&lastPlaybackTime>.25&&total-onlineAudio.currentTime<margin};

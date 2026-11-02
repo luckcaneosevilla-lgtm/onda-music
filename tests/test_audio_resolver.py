@@ -111,6 +111,14 @@ class ResolverTests(unittest.TestCase):
             restarted.invalidate('dQw4w9WgXcQ');again=YtDlpResolver();again.persist(path)
             self.assertNotIn('dQw4w9WgXcQ',again.cache)
 
+    def test_webm_and_he_aac_are_not_reused(self):
+        self.assertFalse(YtDlpResolver.reusable('https://r1.googlevideo.com/file?mime=audio%2Fwebm&itag=251'))
+        self.assertFalse(YtDlpResolver.reusable(URL+'&itag=139'))
+        self.assertTrue(YtDlpResolver.reusable(URL+'&itag=140'))
+        resolver=YtDlpResolver()
+        with patch.object(resolver,'run',return_value='https://r1.googlevideo.com/file?mime=audio%2Fwebm'):
+            with self.assertRaisesRegex(AudioUnavailable,'invalid_stream_type'):resolver.resolve('dQw4w9WgXcQ')
+
     def test_invalid_id_and_oversized_or_untrusted_url(self):
         resolver=YtDlpResolver()
         for url in ('http://r1.googlevideo.com/file','https://127.0.0.1/file','https://googlevideo.com.evil.test/file',
