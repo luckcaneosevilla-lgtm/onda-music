@@ -1,8 +1,8 @@
-// External script preserves IVOX's CSP: no inline script or unsafe-inline needed.
+// External script preserves Ivox-Astra's CSP: no inline script or unsafe-inline needed.
 if ('serviceWorker' in navigator && window.isSecureContext) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/service-worker.js', {scope: '/', updateViaCache: 'none'})
-      .catch(error => console.warn('No se pudo registrar el app shell de IVOX:', error));
+      .catch(error => console.warn('No se pudo registrar el app shell de Ivox-Astra:', error));
   });
 }
 
@@ -10,8 +10,8 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 (() => {
   const loaded=document.querySelector('meta[name="ivox-version"]')?.content;
   if(!loaded)return;
-  const release=document.querySelector('meta[name="ivox-release"]')?.content||'3.0';
-  const badge=document.createElement('small');badge.className='app-version';badge.textContent='IVOX '+release;badge.title='Compilación '+loaded;document.body.append(badge);
+  const release=document.querySelector('meta[name="ivox-release"]')?.content||'4.0';
+  const badge=document.createElement('small');badge.className='app-version';badge.textContent='Ivox-Astra '+release;badge.title='Compilación '+loaded;document.body.append(badge);
   const notice=document.createElement('aside');notice.className='app-update';notice.hidden=true;notice.setAttribute('role','status');
   const text=document.createElement('span'),button=document.createElement('button');button.textContent='Recargar ahora';button.className='primary';
   notice.append(text,button);document.body.append(notice);
@@ -21,8 +21,8 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   async function check(){
     if(document.hidden||checking)return;checking=true;
     try{const r=await fetch('/version.json',{cache:'no-store'});if(!r.ok)return;const {version,release:availableRelease}=await r.json();if(typeof version!=='string')return;
-      if(version!==loaded){updateReady=true;button.textContent='Recargar ahora';button.hidden=false;text.textContent='Nueva actualización disponible · IVOX '+(typeof availableRelease==='string'?availableRelease:release);notice.hidden=false}
-      else{notice.hidden=true;const previous=localStorage.getItem('ivox:last-version');if(previous!==loaded){text.textContent='Actualización instalada · IVOX '+release;notice.hidden=false;button.textContent='Entendido';button.hidden=false}localStorage.setItem('ivox:last-version',loaded)}
+      if(version!==loaded){updateReady=true;button.textContent='Recargar ahora';button.hidden=false;text.textContent='Nueva actualización disponible · Ivox-Astra '+(typeof availableRelease==='string'?availableRelease:release);notice.hidden=false}
+      else{notice.hidden=true;const previous=localStorage.getItem('ivox:last-version');if(previous!==loaded){text.textContent='Actualización instalada · Ivox-Astra '+release;notice.hidden=false;button.textContent='Entendido';button.hidden=false}localStorage.setItem('ivox:last-version',loaded)}
     }catch{}finally{checking=false}
   }
   document.addEventListener('visibilitychange',check);window.addEventListener('online',check);setInterval(check,60000);check();

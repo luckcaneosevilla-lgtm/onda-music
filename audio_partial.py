@@ -101,8 +101,8 @@ class RangeSource:
         finally:connection.close();self.fetch_ms+=(time.perf_counter()-began)*1000
 
 class PartialMP4:
-    def __init__(self,item,deadline=None):
-        self.source=RangeSource(item,deadline);self.initial=self.source.fetch(0,PREFIX-1);self.total=self.source.total
+    def __init__(self,item,deadline=None,prefix_bytes=PREFIX):
+        self.source=RangeSource(item,deadline);self.initial=self.source.fetch(0,prefix_bytes-1);self.total=self.source.total
         windows=[(0,self.initial)];boxes=[];position=0
         def read_at(at,size,header=False):
             for start,data in windows:

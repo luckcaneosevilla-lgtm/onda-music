@@ -1,4 +1,4 @@
-// Offline listening (IVOX Premium). Whole songs are kept on this device with the
+// Offline listening (Ivox-Astra Premium). Whole songs are kept on this device with the
 // Cache API under the keys the player already checks first (level 0 in startOnline),
 // so a downloaded song starts at once and uses no data. Titles and covers live in
 // localStorage; the audio never leaves the device.
@@ -67,7 +67,7 @@ function refreshOffline(){
 function drawDownloads(el){
   const entries=offline.entries(),items=entries.map(e=>e.item),total=entries.reduce((n,e)=>n+(e.size||0),0);
   const empty=`<div class="empty"><h2>Tu música, también sin señal</h2><p>Abre ••• en cualquier canción y elige «Guardar sin conexión», o usa «↓ Sin conexión» en una playlist o en tus favoritos.</p></div>`;
-  el.innerHTML=`<div class="topline"><h2>Descargas</h2><small class="muted">${items.length} ${items.length===1?'canción':'canciones'} · ${bytes(total)} en este dispositivo</small></div><p id="offline-progress" class="muted" role="status"></p>${offline.premium()?'':'<p class="source-notice">Guardar nuevas descargas es parte de IVOX Premium.</p>'}${items.length?`<div class="artist-actions collection-actions"><button class="primary" data-downloads="play">▶ Reproducir</button><button data-downloads="shuffle" aria-label="Reproducir en aleatorio">⤮ Aleatorio</button></div><div id="library-videos">${videoCards(items,'downloads')}</div>`:empty}`;
+  el.innerHTML=`<div class="topline"><h2>Descargas</h2><small class="muted">${items.length} ${items.length===1?'canción':'canciones'} · ${bytes(total)} en este dispositivo</small></div><p id="offline-progress" class="muted" role="status"></p>${offline.premium()?'':'<p class="source-notice">Guardar nuevas descargas es parte de Ivox-Astra Premium.</p>'}${items.length?`<div class="artist-actions collection-actions"><button class="primary" data-downloads="play">▶ Reproducir</button><button data-downloads="shuffle" aria-label="Reproducir en aleatorio">⤮ Aleatorio</button></div><div id="library-videos">${videoCards(items,'downloads')}</div>`:empty}`;
   bindVideoCards(el,items,'downloads');
   el.querySelectorAll('[data-downloads]').forEach(b=>b.onclick=()=>playList(items,0,b.dataset.downloads==='shuffle'));
   offline.progress();
@@ -88,7 +88,7 @@ window.offlineStart=async error=>{
   if(navigator.onLine&&!(error instanceof TypeError))return false;
   await cachedReady;const items=offline.items();if(!items.length)return false;
   me={id:'',name:'',role:'user',plan:'premium',offline:true};
-  app.innerHTML=`<main class="content offline-page"><div class="logo">${LOGO}IVOX</div><p class="eyebrow">Sin conexión</p><h1>Tu música sigue aquí.</h1><p class="muted">Escucha tus descargas. Cuando vuelva la señal, IVOX se conecta solo.</p><div class="artist-actions collection-actions"><button class="primary" data-downloads="play">▶ Reproducir todo</button><button data-downloads="shuffle">⤮ Aleatorio</button></div><div id="offline-list">${items.map((v,i)=>`<button class="offline-row" data-offline-play="${i}">${v.thumbnail?`<img src="${esc(v.thumbnail)}" alt="" width="48" height="48">`:'<span aria-hidden="true">♫</span>'}<span><strong>${esc(v.title)}</strong><small>${esc(v.channel||'')}</small></span></button>`).join('')}</div></main>`;
+  app.innerHTML=`<main class="content offline-page"><div class="logo">${LOGO}Ivox-Astra</div><p class="eyebrow">Sin conexión</p><h1>Tu música sigue aquí.</h1><p class="muted">Escucha tus descargas. Cuando vuelva la señal, Ivox-Astra se conecta solo.</p><div class="artist-actions collection-actions"><button class="primary" data-downloads="play">▶ Reproducir todo</button><button data-downloads="shuffle">⤮ Aleatorio</button></div><div id="offline-list">${items.map((v,i)=>`<button class="offline-row" data-offline-play="${i}">${v.thumbnail?`<img src="${esc(v.thumbnail)}" alt="" width="48" height="48">`:'<span aria-hidden="true">♫</span>'}<span><strong>${esc(v.title)}</strong><small>${esc(v.channel||'')}</small></span></button>`).join('')}</div></main>`;
   app.querySelectorAll('[data-downloads]').forEach(b=>b.onclick=()=>playList(items,0,b.dataset.downloads==='shuffle'));
   app.querySelectorAll('[data-offline-play]').forEach(b=>b.onclick=()=>playList(items,Number(b.dataset.offlinePlay)));
   return true;

@@ -12,6 +12,17 @@ CHROME='Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/140.0 Safari/537
 ITEM={'source':'innertube','url':'https://r1.googlevideo.com/videoplayback?secret=not-returned-on-ios','mime':'audio/mp4','expires':9999999999}
 
 class IOSProxyTests(unittest.TestCase):
+    def test_native_attempt_uses_account_scoped_pinned_view(self):
+        handler=Handler.__new__(Handler);handler.command='GET'
+        handler.path='/api/audio/abcdefghijk?native=1&playback=0123456789abcdef&refresh=1'
+        handler.headers={'User-Agent':SAFARI,'Range':'bytes=0-1'}
+        handler.session=Mock(return_value=({'id':'fixture'},{}));handler.relay=Mock();handler.download_name=Mock(return_value=None)
+        response=Mock()
+        with patch('server.provider.metadata',return_value={}),patch('server.native_playback.open',return_value=response) as pinned,patch('server.prepared_audio.invalidate') as invalidate,patch('server.audio_router.open') as upstream:
+            handler.api(Mock(),'/api/audio/abcdefghijk')
+        pinned.assert_called_once_with(('fixture','abcdefghijk','0123456789abcdef'),'abcdefghijk','bytes=0-1',None,refresh=True)
+        invalidate.assert_not_called();upstream.assert_not_called()
+
     def test_apple_clients_receive_no_google_url_without_resolving(self):
         for ua in (SAFARI,'Mozilla/5.0 (iPhone) Version/18.0 Mobile Safari/604.1','Mozilla/5.0 (iPad) CriOS/140 Mobile Safari/604.1','Mozilla/5.0 (iPhone) FxiOS/140 Mobile'):
             with self.subTest(ua=ua):

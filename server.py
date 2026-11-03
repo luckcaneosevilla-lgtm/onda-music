@@ -21,12 +21,14 @@ from music_provider import provider, valid_id, get_response
 from audio_resolver import resolver, AudioUnavailable
 from audio_router import audio_router
 from audio_prepared import PreparedAudioCache
-prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata),partial=True,max_bytes=32*1024*1024,job_timeout=8)
+prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata),partial=True,max_bytes=32*1024*1024,job_timeout=8,prefix_bytes=64*1024)
+from audio_playback import NativePlayback
+native_playback=NativePlayback(prepared_audio,refresh=lambda vid:(audio_router.inner.invalidate(vid),resolver.refresh(vid)))
 from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
 ROOT = Path(__file__).resolve().parent
-RELEASE_VERSION = '3.0'
+RELEASE_VERSION = '4.0'
 # Content-derived release ID changes automatically on every app code update.
 _release_files=sorted(list((ROOT/'web').rglob('*'))+list(ROOT.glob('*.py')))
 APP_VERSION=hashlib.sha256(b''.join(str(p.relative_to(ROOT)).encode()+p.read_bytes() for p in _release_files if p.is_file())).hexdigest()[:10]
@@ -333,7 +335,10 @@ class Handler(BaseHTTPRequestHandler):
             video_id=m[1]
             self.audio_video_id=video_id
             try:
-                if parse_qs(urlparse(self.path).query).get('refresh')==['1']:
+                query=parse_qs(urlparse(self.path).query)
+                attempt=query.get('playback',[''])[0]
+                require(not attempt or re.fullmatch(r'[A-Za-z0-9_-]{16,64}',attempt),'Intento inválido.')
+                if query.get('refresh')==['1'] and not attempt:
                     prepared_audio.invalidate(video_id);audio_router.inner.invalidate(video_id);resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     ua=self.headers.get('User-Agent','')
@@ -341,7 +346,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.send(200,{**audio_route(video_id,item,ua),'prepared':prepared_audio.status(video_id)});return
                 range_header=self.headers.get('Range')
                 require(not range_header or re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header),'Rango inválido.',416)
-                response=prepared_audio.open(video_id,range_header)
+                if attempt:
+                    metadata=provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id)
+                    response=native_playback.open((uid,video_id,attempt),video_id,range_header,metadata,refresh=query.get('refresh')==['1'])
+                else:response=prepared_audio.open(video_id,range_header)
                 if response is not None:
                     connection=response;mime='audio/mp4'
                 else:

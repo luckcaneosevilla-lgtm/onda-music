@@ -7,6 +7,7 @@ import imageio_ffmpeg
 from playwright.sync_api import sync_playwright
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from audio_prepared import PreparedAudioCache,validate_faststart
+from audio_playback import NativePlayback
 from server import Handler
 ff=imageio_ffmpeg.get_ffmpeg_exe();VID='abcdefghijk'
 with tempfile.TemporaryDirectory() as temp:
@@ -23,7 +24,8 @@ with tempfile.TemporaryDirectory() as temp:
  origin=ThreadingHTTPServer(('127.0.0.1',0),Origin);threading.Thread(target=origin.serve_forever,daemon=True).start()
  def opener(url,headers,timeout=3):
   conn=http.client.HTTPConnection('127.0.0.1',origin.server_port,timeout=timeout);conn.request('GET','/file',headers=headers);return conn,conn.getresponse()
- cache=PreparedAudioCache(lambda *a:{'url':'https://r1.googlevideo.com/file?mime=audio%2Fmp4','mime':'audio/mp4'},partial=True,job_timeout=8)
+ cache=PreparedAudioCache(lambda *a:{'url':'https://r1.googlevideo.com/file?mime=audio%2Fmp4','mime':'audio/mp4'},partial=True,job_timeout=8,prefix_bytes=65536 if '--astra' in sys.argv else 524288)
+ native=NativePlayback(cache)
  try:
   with patch('audio_partial.get_response',side_effect=opener):
    began=time.perf_counter();cache._prepare(VID,{},began);prepare_ms=round((time.perf_counter()-began)*1000,2);prepared_requests=list(requests)
@@ -51,17 +53,27 @@ with tempfile.TemporaryDirectory() as temp:
     def do_GET(self):
      if self.path=='/audio':
       self.started=time.perf_counter();self.audio_request_id='partial-fixture';self.audio_video_id=None
-      response=cache.open(VID,self.headers.get('Range'));self.relay(None,response,response,'audio/mp4',1);return
+      response=native.open(('fixture','attempt'),VID,self.headers.get('Range')) if '--astra' in sys.argv else cache.open(VID,self.headers.get('Range'))
+      assert response is not None,'native cold preparation did not complete'
+      self.relay(None,response,response,'audio/mp4',1);return
      body=b'<meta name="viewport" content="width=device-width,initial-scale=1"><audio preload="auto" playsinline></audio><button>Play</button>'
      self.send_response(200);self.headers_common('text/html');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
    player=ThreadingHTTPServer(('127.0.0.1',0),Player);threading.Thread(target=player.serve_forever,daemon=True).start()
    try:
+    if '--astra' in sys.argv:cache.invalidate(VID)
     with patch('server.metric'),sync_playwright() as p:
      webkit='--webkit' in sys.argv;browser=(p.webkit if webkit else p.chromium).launch();results=[]
      for _ in range(3):
       context=browser.new_context(**p.devices['iPhone 13']);page=context.new_page();page.goto(f'http://127.0.0.1:{player.server_port}/')
       page.evaluate("""()=>{window.result=new Promise(resolve=>{const a=document.querySelector('audio'),marks={};let t;for(const event of ['loadedmetadata','loadeddata','playing','error'])a.addEventListener(event,()=>{marks[event]=Math.round(performance.now()-t);if(event==='playing'||event==='error')resolve({marks,error:a.error?.code||null,duration:a.duration})},{once:true});document.querySelector('button').onclick=()=>{t=performance.now();a.src='/audio';a.play().catch(error=>resolve({marks,error:error.name}));setTimeout(()=>resolve({marks,error:'timeout'}),10000)}})}""")
-      page.locator('button').click();results.append(page.evaluate('()=>window.result'));context.close()
+      page.locator('button').click();result=page.evaluate('()=>window.result')
+      if not webkit:
+       assert result['error'] is None,result
+       if '--astra' in sys.argv:
+        page.evaluate('()=>{document.querySelector("audio").currentTime=35}')
+        page.wait_for_function('()=>document.querySelector("audio").currentTime>35.25&&!document.querySelector("audio").paused',timeout=5000)
+        result['seek_beyond_prefix']='PASS'
+      results.append(result);context.close()
      browser.close()
    finally:player.shutdown();player.server_close()
    print(json.dumps({'engine':'WebKit' if webkit else 'Chromium','upstream_delay_ms':80,'partial_prepare_ms':prepare_ms,'cached_first_8k_ms':cached_first_ms,'preparation_ranges':prepared_requests,'preparation_bytes':sum(e-s+1 for s,e in prepared_requests),'total_bytes':len(raw),'decode_equivalence':'PASS','random_access':'PASS','browser':results}))

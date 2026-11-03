@@ -29,7 +29,7 @@ PROFILES=[(CLIENT,HEADERS),
 
 class InnerTubeResolver:
     def __init__(self,timeout=.7,preferred='VISIONOS'):
-        self.timeout=timeout;self.cache={};self.failures={};self.lock=threading.Lock()
+        self.timeout=timeout;self.cache={};self.failures={};self.lock=threading.Lock();self.inflight={}
         self.connections=queue.LifoQueue(maxsize=4);self.visitor_lock=threading.Lock()
         self.visitor=None;self.visitor_expires=0;self.visitor_retry=0
         self.preferred=preferred if preferred in {p[0]['clientName'] for p in PROFILES} else 'VISIONOS'
@@ -108,6 +108,27 @@ class InnerTubeResolver:
         return None
 
     def resolve(self,video_id):
+        """Coalesce Play, speculative warming and metadata preparation per song."""
+        if not isinstance(video_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}',video_id):return None
+        with self.lock:
+            hit=self.cache.get(video_id)
+            if hit and hit['expires']>time.time():return hit
+            if self.failures.get(video_id,0)>time.monotonic():return None
+            pending=self.inflight.get(video_id)
+            owner=pending is None
+            if owner:
+                if len(self.inflight)>=8:return None
+                pending=threading.Event();self.inflight[video_id]=pending
+        if not owner:
+            pending.wait(min(2,self.timeout*3))
+            with self.lock:
+                hit=self.cache.get(video_id)
+                return hit if hit and hit['expires']>time.time() else None
+        try:return self._resolve(video_id)
+        finally:
+            with self.lock:self.inflight.pop(video_id,None);pending.set()
+
+    def _resolve(self,video_id):
         if not isinstance(video_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}',video_id):return None
         with self.lock:
             hit=self.cache.get(video_id)

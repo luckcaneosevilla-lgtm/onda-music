@@ -83,12 +83,14 @@ class UnsatisfiedRange:
 
 
 class PreparedAudioCache:
-    def __init__(self,resolve,binary=None,ttl=1800,max_bytes=256*1024*1024,max_file=32*1024*1024,max_entries=24,job_timeout=40,partial=False):
+    def __init__(self,resolve,binary=None,ttl=1800,max_bytes=256*1024*1024,max_file=32*1024*1024,max_entries=24,job_timeout=40,partial=False,prefix_bytes=512*1024):
         self.resolve=resolve;self.binary=binary;self.partial=partial;self.ttl=ttl;self.max_bytes=max_bytes;self.max_file=max_file
-        self.max_entries=max_entries;self.job_timeout=job_timeout
+        self.max_entries=max_entries;self.job_timeout=job_timeout;self.prefix_bytes=prefix_bytes
         self.lock=threading.RLock();self.entries=OrderedDict();self.pending=deque(maxlen=8)
         self.inflight=set();self.failures={};self.details=OrderedDict();self.worker=None;self.temp=None;self.process=None
-        self.stopping=threading.Event();atexit.register(self.close)
+        self.stopping=threading.Event();self.changed=threading.Condition(self.lock)
+        self.demand_slot=threading.BoundedSemaphore(1);self.demand_worker=None
+        atexit.register(self.close)
     def _prune(self,needed=0):
         now=time.monotonic()
         for key,entry in list(self.entries.items()):
@@ -151,8 +153,41 @@ class PreparedAudioCache:
                     self.failures[vid]=time.monotonic()+retry;stage=self.details.get(vid,{}).get('stage','resolve')
                     self.details[vid]={'status':'failed','stage':stage,'reason':reason}
             finally:
-                with self.lock:self.inflight.discard(vid)
+                with self.changed:self.inflight.discard(vid);self.changed.notify_all()
                 metric('audio_prepared',video_id=vid,success=success,reason=reason,prepare_ms=round((time.perf_counter()-started)*1000,2))
+    def ensure(self,vid,metadata=None,timeout=2):
+        """Give cold Play a reserved slot instead of waiting behind speculative work.
+
+        Join an existing preparation rather than resolving/downloading it twice.
+        The caller's wait is bounded; a late result remains useful for next Play.
+        """
+        deadline=time.monotonic()+timeout
+        with self.changed:
+            if not self.partial:return False
+            self._prune()
+            if vid in self.entries:return True
+            if self.stopping.is_set() or self.failures.get(vid,0)>time.monotonic():return False
+            if vid not in self.inflight:
+                if not self.demand_slot.acquire(blocking=False):return False
+                queued=next((item for item in self.pending if item['provider_id']==vid),None)
+                if queued:self.pending.remove(queued)
+                self.inflight.add(vid)
+                def prepare():
+                    try:
+                        self._prepare(vid,metadata or {},time.perf_counter())
+                    except (AudioUnavailable,OSError,ValueError,http.client.HTTPException,ProviderError,subprocess.SubprocessError):
+                        with self.lock:self.failures[vid]=time.monotonic()+2
+                    finally:
+                        with self.changed:
+                            self.inflight.discard(vid);self.demand_slot.release();self.changed.notify_all()
+                self.demand_worker=threading.Thread(target=prepare,daemon=True,name='ivox-play-prepare')
+                self.demand_worker.start()
+            while vid in self.inflight:
+                remaining=deadline-time.monotonic()
+                if remaining<=0 or self.stopping.is_set():break
+                self.changed.wait(remaining)
+            entry=self.entries.get(vid)
+            return bool(entry and entry['expires']>time.monotonic())
     def _prepare(self,vid,metadata,started):
         if self.partial:return self._prepare_partial(vid,metadata,started)
         binary=self.binary or shutil.which('ffmpeg')
@@ -227,7 +262,7 @@ class PreparedAudioCache:
         # Selection already guarantees AAC-LC. Preserve its samples and prepare
         # only the metadata/prefix instead of encoding another complete file.
         self._stage(vid,'partial_download')
-        view=PartialMP4(resolved,deadline=started+self.job_timeout)
+        view=PartialMP4(resolved,deadline=started+self.job_timeout,prefix_bytes=self.prefix_bytes)
         view.prepare_ms=round((time.perf_counter()-started)*1000,2)
         lifetime=min(self.ttl,float(resolved.get('expires',time.time()+self.ttl))-time.time()-30)
         if lifetime<=0:raise AudioUnavailable('partial_url_expired')
@@ -279,12 +314,13 @@ class PreparedAudioCache:
     def close(self):
         self.stopping.set()
         with self.lock:
-            self.pending.clear();process=self.process;worker=self.worker
+            self.pending.clear();process=self.process;worker=self.worker;demand=self.demand_worker
             for entry in self.entries.values():entry['expires']=0
         if process and process.poll() is None:
             try:process.kill()
             except OSError:pass
         if worker and worker is not threading.current_thread():worker.join(timeout=15)
+        if demand and demand is not threading.current_thread():demand.join(timeout=10)
         with self.lock:
             if (not worker or not worker.is_alive()) and not any(e['leases'] for e in self.entries.values()):
                 if self.temp:self.temp.cleanup();self.temp=None

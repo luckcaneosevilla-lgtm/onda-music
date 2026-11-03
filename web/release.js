@@ -1,6 +1,6 @@
 // Release notice shared by existing accounts and first-time listeners.
 (() => {
-  const version='3.0',seen=new Set();
+  const version='4.0',seen=new Set();
   const mascot=`<svg class="anubis" viewBox="0 0 240 260" aria-hidden="true" fill="none">
     <ellipse cx="120" cy="242" rx="66" ry="7" fill="#d4af37" opacity=".15"/>
     <g class="anubis-body" stroke="#d4af37" stroke-width="3" stroke-linejoin="round">
@@ -25,13 +25,13 @@
   const modal=document.createElement('dialog');modal.className='release-dialog';
   modal.setAttribute('aria-labelledby','release-title');modal.setAttribute('aria-describedby','release-description');
   modal.innerHTML=`<button class="release-close" aria-label="Cerrar novedades">×</button>
-    <div class="release-art">${mascot}<span class="release-version">IVOX ${version}</span></div>
-    <div class="release-copy"><h1 id="release-title">Anubis te da la bienvenida.</h1>
-    <p id="release-description">IVOX ${version} ya está aquí. Tu música, con menos espera y más por descubrir.</p>
-    <ul><li><strong>Reproducción más rápida en iPhone.</strong><span>Preparamos tu música mientras exploras los resultados.</span></li>
-    <li><strong>Artistas y radio infinita.</strong><span>Explora sus perfiles y sigue escuchando canciones relacionadas.</span></li>
-    <li><strong>Anubis, letras y gestos.</strong><span>Abre el reproductor completo, sigue la letra y cambia de canción deslizando.</span></li></ul>
-    <button class="primary release-start">Entrar a IVOX ${version}</button></div>`;
+    <div class="release-art">${mascot}<span class="release-version">Ivox-Astra ${version}</span></div>
+    <div class="release-copy"><h1 id="release-title">Tu música. Una nueva era.</h1>
+    <p id="release-description">Ivox-Astra ${version} ya está aquí. Tu música, con menos espera y más por descubrir.</p>
+    <ul><li><strong>Reproducción más rápida en iPhone.</strong><span>Inicio ligero y preparación prioritaria al pulsar Play.</span></li>
+    <li><strong>Continuidad y saltos seguros.</strong><span>Una misma fuente de audio desde el primer instante hasta el final.</span></li>
+    <li><strong>Todo tu universo musical.</strong><span>Abre el reproductor completo, sigue la letra y cambia de canción deslizando.</span></li></ul>
+    <button class="primary release-start">Entrar a Ivox-Astra ${version}</button></div>`;
   document.body.append(modal);
   let account=null;
   const key=id=>`ivox:release:${version}:${id}`;
@@ -43,7 +43,7 @@
     const container=document.querySelector('.account');if(!container)return;
     account=String(me.id);
     if(!container.querySelector('.release-trigger')){
-      const button=document.createElement('button');button.className='release-trigger';button.textContent=`IVOX ${version}`;button.setAttribute('aria-label',`Novedades de IVOX ${version}`);
+      const button=document.createElement('button');button.className='release-trigger';button.textContent=`Ivox-Astra ${version}`;button.setAttribute('aria-label',`Novedades de Ivox-Astra ${version}`);
       button.onclick=()=>{if(!modal.open)modal.showModal()};container.prepend(button);
     }
     let dismissed=seen.has(account);try{dismissed ||= localStorage.getItem(key(account))==='seen'}catch{}

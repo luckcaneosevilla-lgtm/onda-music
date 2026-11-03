@@ -1,4 +1,6 @@
-# IVOX 3.0
+# Ivox-Astra 4.0
+
+La versión 4.0 reduce el prefijo preparado de 512 a 64 KiB, reserva capacidad para la canción elegida al pulsar Play y conserva los mismos offsets MP4 entre las peticiones de Safari. Comparte las resoluciones simultáneas y aplica los reintentos una sola vez por intento. El nombre, el arranque, el manifiesto y las novedades muestran **Ivox-Astra 4.0**. Análisis, decisiones y resultados verificables: [Ivox-Astra 4.0](docs/ASTRA_4.md).
 
 ## Novedades de la versión 3.0
 

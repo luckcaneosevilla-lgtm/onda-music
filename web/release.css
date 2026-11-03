@@ -9,5 +9,5 @@
 @keyframes anubis-sway{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg) translateY(-4px)}}
 @keyframes anubis-nod{0%,100%{transform:rotate(0)}50%{transform:rotate(-7deg)}}
 @keyframes anubis-notes{0%,100%{transform:translateY(0);opacity:.6}50%{transform:translateY(-8px);opacity:1}}
-@media(max-width:600px){.release-dialog[open]{grid-template-columns:1fr}.release-art{padding:12px;flex-direction:row;gap:12px;border-right:0;border-bottom:1px solid var(--line-gold)}.anubis{width:118px;height:130px}.release-version{margin:0;font-size:28px}.release-copy{padding:24px}.release-copy ul{margin:18px 0}.release-copy li{margin:14px 0}}
+@media(max-width:600px){.release-dialog[open]{grid-template-columns:1fr}.release-art{padding:12px;flex-direction:row;gap:12px;border-right:0;border-bottom:1px solid var(--line-gold)}.anubis{width:100px;height:120px;flex-shrink:0}.release-version{margin:0;font-size:clamp(17px,5vw,24px);overflow-wrap:anywhere}.release-copy{padding:24px}.release-copy ul{margin:18px 0}.release-copy li{margin:14px 0}}
 @media(prefers-reduced-motion:reduce){.anubis-body,.anubis-head,.anubis-notes{animation:none}}

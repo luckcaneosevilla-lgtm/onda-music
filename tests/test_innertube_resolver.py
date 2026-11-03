@@ -1,6 +1,8 @@
 import io
 import json
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest.mock import Mock,patch
 from innertube_resolver import InnerTubeResolver,CLIENT
@@ -14,6 +16,19 @@ def payload(**changes):
     result.update(changes);return result
 
 class InnerTubeTests(unittest.TestCase):
+    def test_concurrent_play_and_preparation_share_one_player_request(self):
+        resolver=InnerTubeResolver();started=threading.Event();release=threading.Event()
+        item={'url':URL,'mime':'audio/mp4','expires':time.time()+60}
+        def resolve(vid):
+            started.set();release.wait(1)
+            with resolver.lock:resolver.cache[vid]=item
+            return item
+        with patch.object(resolver,'_resolve',side_effect=resolve) as request,ThreadPoolExecutor(2) as pool:
+            first=pool.submit(resolver.resolve,VID);self.assertTrue(started.wait(1))
+            second=pool.submit(resolver.resolve,VID);release.set()
+            self.assertEqual(first.result(),item);self.assertEqual(second.result(),item)
+        request.assert_called_once_with(VID)
+
     def test_post_context_and_cache_without_subprocess(self):
         response=Mock(status=200);response.read.return_value=json.dumps(payload()).encode()
         connection=Mock();connection.getresponse.return_value=response
