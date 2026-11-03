@@ -135,44 +135,11 @@ function nowPlayingArt(item){
   const cover=$('#np-cover'),art=bigArt(item.thumbnail);if(art){cover.src=art;cover.hidden=false;cover.onerror=()=>{cover.hidden=true}}else{cover.hidden=true;cover.removeAttribute('src')}
   if('mediaSession' in navigator&&window.MediaMetadata)navigator.mediaSession.metadata=new MediaMetadata({title:item.title,artist:item.channel||'',album:item.album||'Ivox-Astra',artwork:art?[{src:art,sizes:'600x600'}]:[{src:'/icon-512x512.png',sizes:'512x512',type:'image/png'}]});
 }
-async function downloadOnline(v){
-  if(!v||v.provider==='local')return;notify('Preparando descarga de «'+v.title+'»…');
-  let url;
-  if(v.provider==='piped')url='/api/audio/'+v.provider_id;
-  else url=(await api('/api/online/play/'+encodeURIComponent(v.id).replace('%3A',':')+'?format=mp4')).url;
-  const name=[v.channel,v.title].filter(Boolean).join(' - ');
-  const ios=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  if(ios){
-    // Download first, then ask for another tap: fetching a song can outlive
-    // WebKit's user activation window for the native file sharing sheet.
-    const response=await fetch(url,{credentials:'same-origin',cache:'no-store'});
-    const mime=(response.headers.get('Content-Type')||'').split(';')[0].trim().toLowerCase();
-    if(!response.ok||response.status===206||!mime.startsWith('audio/'))throw new Error('No se pudo descargar el audio. Inténtalo de nuevo.');
-    const blob=await response.blob();
-    if(!blob.size)throw new Error('La descarga llegó vacía. Inténtalo de nuevo.');
-    const extension={'audio/mp4':'m4a','audio/mpeg':'mp3','audio/webm':'webm','audio/ogg':'ogg','audio/wav':'wav'}[mime]||'audio';
-    const filename=(name.replace(/[\x00-\x1f\\/:*?"<>|]+/g,' ').trim().slice(0,120)||'IVOX')+'.'+extension;
-    const file=new File([blob],filename,{type:mime});
-    if(navigator.share&&navigator.canShare?.({files:[file]})){
-      openDialog('<h2>Archivo preparado</h2><p>Pulsa Guardar y elige «Guardar en Archivos» en el menú del iPhone.</p><button id="save-audio-file" class="primary">Guardar archivo</button>');
-      const save=$('#save-audio-file');
-      save.onclick=async()=>{
-        save.disabled=true;
-        try{await navigator.share({files:[file]});dialog.close()}
-        catch(error){if(error.name!=='AbortError')notify('No se pudo abrir el menú para guardar. Vuelve a intentarlo.')}
-        finally{save.disabled=false}
-      };
-    }else{
-      const objectUrl=URL.createObjectURL(file);
-      openDialog('<h2>Archivo preparado</h2><p>Abre el archivo y usa Compartir → Guardar en Archivos si aparece una vista previa.</p><a id="save-audio-file" class="primary">Abrir archivo</a>');
-      const save=$('#save-audio-file');save.href=objectUrl;save.download=filename;save.target='_blank';save.rel='noopener';
-      dialog.addEventListener('close',()=>URL.revokeObjectURL(objectUrl),{once:true});
-    }
-    return;
-  }
-  const link=document.createElement('a');link.href=url+(url.includes('?')?'&':'?')+'download='+encodeURIComponent(name);link.download='';
-  document.body.append(link);link.click();link.remove();
+function downloadOnline(v){
+  if(!v||v.provider==='local')return;
+  return offline.add([v]);
 }
+
 window.cancelOnlineSearch=()=>{closeSuggest();searchController?.abort();searchVersion++;searchView.loading=false};
 const openLink=link=>link.onclick=e=>{e.preventDefault();history.pushState({},'',link.getAttribute('href'));render().catch(e=>notify(e.message))};
 
@@ -377,9 +344,8 @@ async function setFavorite(v,value,origin){
 }
 function externalLink(v){if(v.provider==='piped'&&onlineStatus?.allow_youtube_external)return `<a class="text-link" href="https://www.youtube.com/watch?v=${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en YouTube (fuera de Ivox-Astra)</a>`;if(v.provider==='audius')return `<a class="text-link" href="https://audius.co/tracks/${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en Audius</a>`;return ''}
 function onlineOptions(v){
-  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="play-next">Reproducir a continuación</button><button id="enqueue">Añadir a la cola</button>${v.provider==='piped'?'<button id="start-radio">◉ Iniciar radio de esta canción</button>':''}<button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button>${v.provider!=='local'?`<button id="offline-toggle">${offline.has(v.id)?'✓ Disponible sin conexión · quitar':'↓ Guardar sin conexión'}${offline.premium()?'':' <span class="pill">Premium</span>'}</button>`:''}<button id="download-online">Descargar archivo</button>${externalLink(v)}</div>`);
+  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="play-next">Reproducir a continuación</button><button id="enqueue">Añadir a la cola</button>${v.provider==='piped'?'<button id="start-radio">◉ Iniciar radio de esta canción</button>':''}<button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button>${v.provider!=='local'?`<button id="offline-toggle">${offline.has(v.id)?'✓ Disponible sin conexión · quitar':'↓ Guardar sin conexión'}${offline.premium()?'':' <span class="pill">Premium</span>'}</button>`:''}${externalLink(v)}</div>`);
   if($('#offline-toggle'))$('#offline-toggle').onclick=()=>{dialog.close();offline.has(v.id)?perform(()=>offline.remove(v.id)):offline.add([v])};
-  $('#download-online').onclick=()=>{dialog.close();perform(()=>downloadOnline(v))};
   $('#play-next').onclick=()=>{dialog.close();notify(enqueue([v],true)?'Reproduciendo «'+v.title+'».':'Sonará a continuación.')};
   $('#enqueue').onclick=()=>{dialog.close();notify(enqueue([v])?'Reproduciendo «'+v.title+'».':'Añadido a la cola.')};
   if($('#start-radio'))$('#start-radio').onclick=()=>{dialog.close();startRadio(v)};

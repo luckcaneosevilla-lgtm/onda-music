@@ -37,7 +37,7 @@ const offline={
   async fetchOne(v){
     const url=v.provider==='piped'?'/api/audio/'+v.provider_id:(await api('/api/online/play/'+encodeURIComponent(v.id).replace('%3A',':')+'?format=mp4')).url;
     const response=await fetch(url),type=(response.headers.get('Content-Type')||'').split(';')[0];
-    if(!response.ok||!/^(audio|video)\//.test(type))throw Error('audio_unavailable');
+    if(!response.ok||response.status===206||!/^(audio|video)\//.test(type))throw Error('audio_unavailable');
     const blob=await response.blob();if(blob.size<10000)throw Error('audio_unavailable');
     await(await caches.open(AUDIO_CACHE)).put(audioKey(v.id),new Response(blob,{headers:{'Content-Type':type,'Content-Length':String(blob.size)}}));
     cachedIds.add(v.id);
