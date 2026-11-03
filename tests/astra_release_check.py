@@ -44,7 +44,7 @@ try:
   assert page.locator('.app-version').inner_text()=='Ivox-Astra 4.0'
   page.wait_for_function('()=>!!navigator.serviceWorker.controller')
   caches=page.evaluate('()=>window.caches.keys()')
-  assert 'ivox-app-shell-v27' in caches,caches
+  assert 'ivox-app-shell-v28' in caches,caches
   context.set_offline(True);page.reload(wait_until='domcontentloaded')
   assert page.title().startswith('Ivox-Astra 4.0')
   assert not errors,errors

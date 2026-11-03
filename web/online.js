@@ -141,6 +141,35 @@ async function downloadOnline(v){
   if(v.provider==='piped')url='/api/audio/'+v.provider_id;
   else url=(await api('/api/online/play/'+encodeURIComponent(v.id).replace('%3A',':')+'?format=mp4')).url;
   const name=[v.channel,v.title].filter(Boolean).join(' - ');
+  const ios=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(ios){
+    // Download first, then ask for another tap: fetching a song can outlive
+    // WebKit's user activation window for the native file sharing sheet.
+    const response=await fetch(url,{credentials:'same-origin',cache:'no-store'});
+    const mime=(response.headers.get('Content-Type')||'').split(';')[0].trim().toLowerCase();
+    if(!response.ok||response.status===206||!mime.startsWith('audio/'))throw new Error('No se pudo descargar el audio. Inténtalo de nuevo.');
+    const blob=await response.blob();
+    if(!blob.size)throw new Error('La descarga llegó vacía. Inténtalo de nuevo.');
+    const extension={'audio/mp4':'m4a','audio/mpeg':'mp3','audio/webm':'webm','audio/ogg':'ogg','audio/wav':'wav'}[mime]||'audio';
+    const filename=(name.replace(/[\x00-\x1f\\/:*?"<>|]+/g,' ').trim().slice(0,120)||'IVOX')+'.'+extension;
+    const file=new File([blob],filename,{type:mime});
+    if(navigator.share&&navigator.canShare?.({files:[file]})){
+      openDialog('<h2>Archivo preparado</h2><p>Pulsa Guardar y elige «Guardar en Archivos» en el menú del iPhone.</p><button id="save-audio-file" class="primary">Guardar archivo</button>');
+      const save=$('#save-audio-file');
+      save.onclick=async()=>{
+        save.disabled=true;
+        try{await navigator.share({files:[file]});dialog.close()}
+        catch(error){if(error.name!=='AbortError')notify('No se pudo abrir el menú para guardar. Vuelve a intentarlo.')}
+        finally{save.disabled=false}
+      };
+    }else{
+      const objectUrl=URL.createObjectURL(file);
+      openDialog('<h2>Archivo preparado</h2><p>Abre el archivo y usa Compartir → Guardar en Archivos si aparece una vista previa.</p><a id="save-audio-file" class="primary">Abrir archivo</a>');
+      const save=$('#save-audio-file');save.href=objectUrl;save.download=filename;save.target='_blank';save.rel='noopener';
+      dialog.addEventListener('close',()=>URL.revokeObjectURL(objectUrl),{once:true});
+    }
+    return;
+  }
   const link=document.createElement('a');link.href=url+(url.includes('?')?'&':'?')+'download='+encodeURIComponent(name);link.download='';
   document.body.append(link);link.click();link.remove();
 }
