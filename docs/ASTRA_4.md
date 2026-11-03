@@ -36,6 +36,8 @@ The first integrated cold attempt reached `loadedmetadata` at 183 ms and `playin
 
 Regression coverage includes cold-wait bounds, reserved Play admission, joining preparation, immutable route choices across publication/invalidation, one refresh per attempt, and shared player resolution. Existing authentication, isolation, cache, resolver, routing and streaming tests are also run.
 
+Final Python run: **85 tests passed**. All **15 full-player interaction cases passed**, including first tap, repeated taps while loading, sheet controls, asynchronous sources, legacy device cache, duration correction, recovery, reconnect, pause during a stall and absence of a competing second download. The interaction fixture now answers the separate resolve request with JSON instead of incorrectly returning WAV bytes for it.
+
 The release smoke check verifies the actual HTML, version endpoint, manifest, release dialog, layouts at 320/390/768/1440 px, service-worker v27, offline shell and absence of browser script errors. Screenshots are in `test-results/astra-4-mobile-*.png`.
 
 Commands:
@@ -44,8 +46,17 @@ Commands:
 python -m unittest discover -s tests -v
 python tests/partial_audio_probe.py --astra
 python tests/astra_release_check.py
+python tests/play_intent_check.py
 node tests/prefetch_priority_check.cjs
 node tests/service_worker_audio_check.cjs
 ```
 
 Real iPhone timing and playback over the production network must be distinguished from these automated checks. A release number does not establish universal latency or provider availability.
+
+## Deployment and actual production media
+
+Published application commit `4cef735` to `origin/main`. The public `/version.json` endpoint subsequently returned `release: 4.0`, build `9316d1a7af`, matching the hash of the committed application files.
+
+`python tests/astra_production_check.py` exercised the deployed app using real catalogue audio, an isolated QA account and Chromium with the native iPhone user agent. The fourth search result reached `playing` at **206 ms**; the first result reached it at **620 ms**. Both played beyond six seconds and successfully sought to and played beyond 35 seconds. Observed audio responses were HTTP 206, `audio/mp4`, source `prepared-partial`, with no browser script errors. These are two individual production runs, not percentile measurements or physical iPhone timings; the shared server cache was not flushed, so the fourth-result case is not proof of a globally cold origin.
+
+The sanitized result is stored locally in `test-results/astra-production.json`. Credentials and signed audio URLs are not included. The production-check script creates a dedicated QA account on each invocation and should not be used as a load test.

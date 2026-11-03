@@ -41,7 +41,10 @@ try:
    if mode=='safari-duration':options['user_agent']='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1'
    context=browser.new_context(**options);page=context.new_page();page.add_init_script("new MutationObserver(()=>document.querySelectorAll('dialog.release-dialog[open]').forEach(d=>d.close())).observe(document,{subtree:true,attributes:true,childList:true})");errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
    media_requests=[]
-   def tracked_media(route):media_requests.append(route.request.url);media(route)
+   def tracked_media(route):
+    if 'resolve=1' in route.request.url:
+     route.fulfill(json={'url':'/api/audio/testVideo01?native=1','source':'proxy-native','level':1});return
+    media_requests.append(route.request.url);media(route)
    context.route('**/api/audio/testVideo*',tracked_media)
    context.route('**/fixture-audio',media)
    if mode=='stream-duration-correction':context.route('**/api/online/items/**',lambda r:r.fulfill(json={'duration':60}))
