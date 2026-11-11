@@ -10,4 +10,14 @@
 @keyframes anubis-nod{0%,100%{transform:rotate(0)}50%{transform:rotate(-7deg)}}
 @keyframes anubis-notes{0%,100%{transform:translateY(0);opacity:.6}50%{transform:translateY(-8px);opacity:1}}
 @media(max-width:600px){.release-dialog[open]{grid-template-columns:1fr}.release-art{padding:12px;flex-direction:row;gap:12px;border-right:0;border-bottom:1px solid var(--line-gold)}.anubis{width:100px;height:120px;flex-shrink:0}.release-version{margin:0;font-size:clamp(17px,5vw,24px);overflow-wrap:anywhere}.release-copy{padding:24px}.release-copy ul{margin:18px 0}.release-copy li{margin:14px 0}}
-@media(prefers-reduced-motion:reduce){.anubis-body,.anubis-head,.anubis-notes{animation:none}}
+/* 5.0: Anubis awake — dances, raises his staff, eyes glow blue. */
+.anubis-awake .anubis-body{animation:anubis-dance 1.6s ease-in-out infinite}
+.anubis-awake .anubis-head{animation:anubis-groove 1.6s ease-in-out infinite}
+.anubis-awake .anubis-arm{transform-origin:155px 174px;animation:anubis-staff 1.6s ease-in-out infinite}
+.anubis-awake .anubis-notes{animation-duration:1.6s}
+.anubis-awake .anubis-eye{fill:#7fd8ff;filter:url(#anubis-glow);animation:anubis-eyes 1.6s ease-in-out infinite}
+@keyframes anubis-dance{0%,100%{transform:rotate(-5deg) translateY(0)}25%{transform:rotate(0) translateY(-10px)}50%{transform:rotate(5deg) translateY(0)}75%{transform:rotate(0) translateY(-10px)}}
+@keyframes anubis-groove{0%,100%{transform:rotate(4deg)}50%{transform:rotate(-9deg)}}
+@keyframes anubis-staff{0%,100%{transform:rotate(0)}50%{transform:rotate(-14deg)}}
+@keyframes anubis-eyes{0%,100%{fill:#4cc3ff;opacity:.85}50%{fill:#d6f4ff;opacity:1}}
+@media(prefers-reduced-motion:reduce){.anubis-body,.anubis-head,.anubis-notes,.anubis-awake .anubis-arm{animation:none}.anubis-awake .anubis-eye{animation:none;fill:#7fd8ff}}

@@ -1,7 +1,11 @@
 // Release notice shared by existing accounts and first-time listeners.
 (() => {
-  const version='4.0',seen=new Set();
-  const mascot=`<svg class="anubis" viewBox="0 0 240 260" aria-hidden="true" fill="none">
+  // The release number comes from the server (RELEASE_VERSION) so the notice never drifts.
+  const version=document.querySelector('meta[name="ivox-release"]')?.content||'4.0',seen=new Set();
+  // From 5.0 Anubis comes alive: a full dance and glowing blue eyes.
+  const era=parseFloat(version)>=5?' anubis-awake':'';
+  const mascot=`<svg class="anubis${era}" viewBox="0 0 240 260" aria-hidden="true" fill="none">
+    <defs><filter id="anubis-glow" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
     <ellipse cx="120" cy="242" rx="66" ry="7" fill="#d4af37" opacity=".15"/>
     <g class="anubis-body" stroke="#d4af37" stroke-width="3" stroke-linejoin="round">
       <path d="M78 221 87 158h66l9 63-42 17Z" fill="#152858"/>
@@ -13,12 +17,13 @@
         <path d="m80 92 38-18 44 19 9 40-29 30-38-8-24-34Z" fill="#17171d"/>
         <path d="m145 110 48 14-7 14-46 4-23-14" fill="#17171d"/>
         <path d="m184 123 9 1-7 9-7-4Z" fill="#d4af37"/>
-        <path d="m136 102 16 5-14 5" fill="#f0d77c"/>
+        <path class="anubis-eye" d="m136 102 16 5-14 5" fill="#f0d77c"/>
         <path d="m91 109 13 33M98 101l14 44M109 93l13 52" stroke="#8f6f1d" stroke-width="2"/>
         <path d="m145 136 21 1" stroke-width="2"/>
       </g>
-      <path d="m85 174-15 31 10 10M155 174l20 24 12-14" stroke-width="10" stroke-linecap="round"/>
-      <path d="M190 150v72m-8-68 8-9 8 9-8 10Z" fill="#d4af37"/>
+      <path d="m85 174-15 31 10 10" stroke-width="10" stroke-linecap="round"/>
+      <g class="anubis-arm"><path d="M155 174l20 24 12-14" stroke-width="10" stroke-linecap="round"/>
+      <path d="M190 150v72m-8-68 8-9 8 9-8 10Z" fill="#d4af37"/></g>
     </g>
     <g class="anubis-notes" fill="#f0d77c"><path d="M42 105v24a6 6 0 1 1-4-6v-22l17-4v10Z"/><path d="M195 63v20a5 5 0 1 1-4-5V60l14 5v7Z"/></g>
   </svg>`;
