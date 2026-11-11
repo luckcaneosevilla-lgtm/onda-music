@@ -30,8 +30,9 @@ class IOSProxyTests(unittest.TestCase):
                 route=audio_route('abcdefghijk',None,ua)
                 self.assertTrue(route['proxy_only']);self.assertEqual(route['url'],'/api/audio/abcdefghijk')
                 self.assertNotIn('googlevideo',str(audio_route('abcdefghijk',ITEM,ua)))
-        self.assertFalse(requires_audio_proxy(CHROME))
-        self.assertEqual(audio_route('abcdefghijk',ITEM,CHROME)['url'],ITEM['url'])
+        # Desktop Chrome too: a server-resolved googlevideo URL is bound to the server's IP.
+        self.assertTrue(requires_audio_proxy(CHROME))
+        self.assertNotIn('googlevideo',str(audio_route('abcdefghijk',ITEM,CHROME)))
 
     def test_resolve_endpoint_on_safari_skips_extractor(self):
         handler=Handler.__new__(Handler)

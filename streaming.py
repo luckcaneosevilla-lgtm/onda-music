@@ -21,10 +21,9 @@ def metric(event, **fields):
     log.info(json.dumps({'timestamp':datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds'),'event':event,**fields},separators=(',',':')))
 
 def requires_audio_proxy(user_agent):
-    """All iOS browsers use the proxy, including desktop-mode iPad Safari."""
-    ua=user_agent or ''
-    return bool(re.search(r'iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|OPiOS',ua,re.I) or
-                ('Safari/' in ua and not re.search(r'Chrome/|Chromium/|Edg/|OPR/|Android',ua)))
+    """Every browser uses the proxy: server-resolved googlevideo URLs are bound to the
+    server's IP and fail when a desktop browser fetches them directly."""
+    return True
 
 
 def audio_route(video_id,item=None,user_agent=''):

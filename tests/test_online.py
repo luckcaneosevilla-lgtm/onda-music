@@ -102,8 +102,9 @@ class OnlineTests(unittest.TestCase):
     def test_ytdlp_endpoint_auth_failure_and_private_resolve_metadata(self):
         from audio_resolver import AudioUnavailable
         self.assertEqual(Client(self.port).request('/api/audio/testVideo01')[0],401)
-        with patch.object(onda.resolver,'resolve',side_effect=AudioUnavailable):
-            status,r=self.client.request('/api/audio/testVideo01?resolve=1');self.assertEqual(status,502);self.assertEqual(r,{'error':'audio_unavailable'})
+        # resolve=1 never runs the extractor any more: every browser streams through the proxy.
+        with patch.object(onda.resolver,'resolve',side_effect=AudioUnavailable) as resolve:
+            status,r=self.client.request('/api/audio/testVideo01?resolve=1');self.assertEqual(status,200);self.assertTrue(r['proxy_only']);resolve.assert_not_called()
         with patch.object(onda.resolver,'resolve',return_value={'url':'https://private.googlevideo.com/secret','mime':'audio/webm'}):
             status,r=self.client.request('/api/audio/testVideo01?resolve=1');self.assertEqual(status,200);self.assertEqual(r['url'],'/api/audio/testVideo01');self.assertNotIn('googlevideo',json.dumps(r))
         from io import BytesIO

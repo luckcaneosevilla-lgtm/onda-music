@@ -36,7 +36,10 @@ const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
 const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id)||window.homeLookup?.(id)||window.offlineLookup?.(id);
 const isSafari=/^((?!chrome|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
-const proxyOnlyAudio=isSafari||/iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|OPiOS/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+// Every browser streams through the server's pinned native route. A googlevideo URL the
+// server resolved is bound to the server's IP, so desktop browsers got ERR_FAILED/ORB on
+// it and then waited ~10 s on a refresh (production, 5.0: 1 of 5 songs played on desktop).
+const proxyOnlyAudio=true;
 // YouTube Music thumbnails come at 60-120 px; the same URL serves any size.
 const bigArt=url=>String(url||'').replace(/=w\d+-h\d+/,'=w600-h600');
 // iOS/Chrome only let an element start playback from a gesture; the first touch anywhere unlocks it for later async plays.
