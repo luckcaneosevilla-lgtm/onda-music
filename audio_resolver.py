@@ -218,7 +218,9 @@ class YtDlpResolver:
                 return item
             except AudioUnavailable as error:
                 # A busy fallback slot is not an unplayable song.
-                if not background and str(error)!='worker_unavailable':
+                # Neither is a deferred speculative attempt: recording it made the
+                # listener's Play right after a search fail with background_deferred.
+                if not background and not is_speculative() and str(error) not in ('worker_unavailable','background_deferred'):
                     with self.guard:
                         self.failures={k:v for k,v in self.failures.items() if v>time.time()}
                         if len(self.failures)>=200:self.failures.pop(next(iter(self.failures)))

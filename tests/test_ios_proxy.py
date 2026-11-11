@@ -70,6 +70,17 @@ class IOSProxyTests(unittest.TestCase):
         finally:speculative.on=False
         resolver.slot.acquire.assert_not_called()
 
+    def test_deferred_speculative_attempt_does_not_fail_the_next_play(self):
+        from audio_resolver import speculative
+        resolver=YtDlpResolver();resolver.slot=Mock();resolver.slot.acquire.return_value=True
+        speculative.on=True
+        try:
+            with self.assertRaisesRegex(AudioUnavailable,'background_deferred'):resolver.resolve('abcdefghijk')
+        finally:speculative.on=False
+        resolver.run=lambda video_id,background=False:'https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&itag=140&expire='+str(int(time.time()+3600))
+        # The listener's Play right after the search must extract, not replay the deferral.
+        self.assertTrue(resolver.resolve('abcdefghijk')['url'].startswith('https://'))
+
     def test_play_joins_extraction_already_running_for_same_song(self):
         resolver=YtDlpResolver();release=threading.Event();calls=[]
         def run(video_id,background=False):

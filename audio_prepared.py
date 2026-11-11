@@ -151,9 +151,12 @@ class PreparedAudioCache:
                 reason=str(error) if isinstance(error,AudioUnavailable) else type(error).__name__
                 reason=re.sub(r'[^A-Za-z0-9_]','',reason)[:60]
                 with self.lock:
+                  # Deferred speculative work never blocks the listener's own Play.
+                  if reason!='background_deferred':
                     retry=2 if reason in ('worker_unavailable','resolution_busy') else 10 if isinstance(error,(OSError,http.client.HTTPException)) or 'timeout' in reason.lower() else 60
                     self.failures[vid]=time.monotonic()+retry;stage=self.details.get(vid,{}).get('stage','resolve')
                     self.details[vid]={'status':'failed','stage':stage,'reason':reason}
+                  else:self.details.pop(vid,None)
             finally:
                 with self.changed:self.inflight.discard(vid);self.changed.notify_all()
                 metric('audio_prepared',video_id=vid,success=success,reason=reason,prepare_ms=round((time.perf_counter()-started)*1000,2))
