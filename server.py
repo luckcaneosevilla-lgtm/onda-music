@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
-from audio_resolver import resolver, AudioUnavailable
+from audio_resolver import resolver, AudioUnavailable, pot_available
 from audio_router import audio_router
 from audio_prepared import PreparedAudioCache
 prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata),partial=True,max_bytes=32*1024*1024,job_timeout=8,prefix_bytes=64*1024)
@@ -680,6 +680,8 @@ def main():
         # Only the lightweight catalog worker stays resident. Audio fallback is
         # one on-demand child process, reaped immediately after extraction.
         provider.music.start()
+        # Log at startup whether the PO-token provider answers (docs/YOUTUBE_BOT_CHECK.md).
+        threading.Thread(target=pot_available,daemon=True,name='ivox-pot-check').start()
         if TURSO:
             # A cheap ping keeps one pooled TLS connection to Turso alive, so a request
             # after a quiet minute (the first Play, opening the library) never pays a handshake.

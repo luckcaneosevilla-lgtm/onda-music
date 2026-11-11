@@ -53,7 +53,7 @@ POT_PROVIDER_URL=os.environ.get('POT_PROVIDER_URL','').strip().rstrip('/')
 if POT_PROVIDER_URL:
     OPTIONS['extractor_args']['youtubepot-bgutilhttp']={'base_url':[POT_PROVIDER_URL]}
 
-_pot_state={'checked':0.0,'up':False};_pot_lock=threading.Lock()
+_pot_state={'checked':0.0,'up':None};_pot_lock=threading.Lock()
 def pot_available():
     """True while the PO-token provider answers /ping (checked at most once a minute).
 
@@ -62,7 +62,7 @@ def pot_available():
     """
     if not POT_PROVIDER_URL:return False
     with _pot_lock:
-        if time.monotonic()-_pot_state['checked']<60:return _pot_state['up']
+        if time.monotonic()-_pot_state['checked']<60:return bool(_pot_state['up'])
         _pot_state['checked']=time.monotonic()
     try:
         parsed=urlparse(POT_PROVIDER_URL)
@@ -71,7 +71,8 @@ def pot_available():
             conn.request('GET',(parsed.path or '')+'/ping');up=conn.getresponse().status==200
     except (OSError,http.client.HTTPException):up=False
     with _pot_lock:
-        if up!=_pot_state['up']:metric('pot_provider',status='up' if up else 'down')
+        # The first check is always logged (up or down), later ones only on change.
+        if up!=_pot_state['up']:metric('pot_provider',status='up' if up else 'down',url=POT_PROVIDER_URL)
         _pot_state['up']=up
     return up
 

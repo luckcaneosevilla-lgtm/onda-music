@@ -35,6 +35,11 @@ class LayerTests(unittest.TestCase):
         # Cached for a minute: no second network check per song.
         with patch('http.client.HTTPConnection') as conn:self.assertFalse(a.pot_available());conn.assert_not_called()
 
+    def test_first_provider_check_is_logged_even_when_down(self):
+        a=fresh(POT_PROVIDER_URL='http://127.0.0.1:9')
+        with patch.object(a,'metric') as metric:self.assertFalse(a.pot_available())
+        metric.assert_called_once();self.assertEqual(metric.call_args.kwargs['status'],'down')
+
     def test_worker_tries_po_token_clients_first_only_when_provider_is_up(self):
         a=fresh()
         self.assertIn("if pot:profiles.insert(0,('yt-dlp-pot',['mweb','android_vr']))",a.WORKER)
