@@ -32,10 +32,10 @@ try:
   auth=browser.new_context()
   auth.request.post(origin+'/api/register',data={'name':'Queue QA','email':'queue@example.test','password':'isolated-queue-regression'})
   state=auth.storage_state();auth.close()
-  for case in ['natural-end','native-pause-no-timers','native-ended-wrong-duration','hidden-interruption','hidden-next-no-timers','hidden-failure-no-timers','late-ended-after-switch','hidden-explicit-pause','silent-end-no-event','browser-pause-at-end','old-radio-new-queue','pause-during-radio','enqueue-during-radio','enqueue-while-radio-stuck','repeat-next','radio-timeout']:
+  for case in ['natural-end','native-pause-no-timers','native-ended-wrong-duration','hidden-interruption','hidden-next-no-timers','hidden-failure-no-timers','late-ended-after-switch','hidden-explicit-pause','silent-end-no-event','browser-pause-at-end','old-radio-new-queue','pause-during-radio','enqueue-during-radio','enqueue-while-radio-stuck','repeat-next','radio-timeout','tapped-failure-stays']:
    print('Checking '+case,flush=True)
    # Lock-screen cases run the iPhone code path (synchronous native source).
-   ios=case in ('native-pause-no-timers','native-ended-wrong-duration','hidden-next-no-timers','late-ended-after-switch','hidden-failure-no-timers')
+   ios=case in ('native-pause-no-timers','native-ended-wrong-duration','hidden-next-no-timers','late-ended-after-switch','hidden-failure-no-timers','tapped-failure-stays')
    context=browser.new_context(viewport={'width':390,'height':844},storage_state=state,**({'user_agent':IPHONE} if ios else {}))
    page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
    context.route('**/api/audio/prefetch',lambda r:r.fulfill(status=202,json={}))
@@ -45,6 +45,7 @@ try:
      # The resolve call is JSON; answering it with WAV failed every song.
      vid=url.split('/api/audio/')[1].split('?')[0]
      return route.fulfill(json={'url':'/api/audio/'+vid+'?stream=1','level':1,'source':'proxy','expires':9e9})
+    if 'broken' in url:return route.fulfill(status=502,body='')
     route.fulfill(body=audio(1 if 'short' in url else 60),content_type='audio/wav')
    context.route('**/api/audio/*',media)
    context.route('**/api/online/items/**',lambda r:r.fulfill(json={}))
@@ -69,7 +70,13 @@ try:
        return originalApi(url,method,body,options);
      };
    }""")
-   if case=='natural-end':
+   if case=='tapped-failure-stays':
+    context.route('**/api/online/search*',lambda r:r.fulfill(json={'items':[]}))
+    page.evaluate("() => {setAutoplay(false);playList([song('broken00001'),song('next0000001')])}")
+    page.wait_for_function("() => document.querySelector('#online-player').dataset.state==='error'",timeout=10000)
+    page.wait_for_timeout(1600)
+    assert page.evaluate("audioIndex===0 && !(onlineAudio.getAttribute('src')||'').includes('next0000001')"),'A tapped song that failed was replaced by the next one'
+   elif case=='natural-end':
     page.evaluate("() => {setAutoplay(false);playList([song('short000001'),song('next0000001')])}")
     page.wait_for_function("() => audioQueue[audioIndex]?.provider_id==='next0000001' && !onlineAudio.paused && onlineAudio.currentTime>.1",timeout=6000)
    elif case in ('native-pause-no-timers','native-ended-wrong-duration','hidden-interruption','hidden-next-no-timers','hidden-failure-no-timers','hidden-explicit-pause','late-ended-after-switch'):

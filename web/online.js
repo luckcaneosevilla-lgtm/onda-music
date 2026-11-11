@@ -26,6 +26,9 @@ let searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error
 let searchController,searchVersion=0,onlineSection='favorites',artistView=null;
 let audioQueue=[],audioIndex=-1,playVersion=0,recordedReference=null,advanceTimer,failedReferences=new Set(),activeLevel=0,activeEngine='',resolutionBusy=false;
 // One controller per playback: changing song aborts every request of the previous one.
+// The song the listener chose by tapping it: if it fails it stays selected instead of
+// another song starting on its own.
+let pickedId=null;
 let playController=null,skipTimer=null,watchdog,failStreak=0,audioUnlocked=false,resumeAt=0,fixingDuration=false;
 let playbackWanted=false,stallTimer=null,recoveryAttempts=0,lastPlaybackTime=0,recoveryInFlight=false;
 let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),freshRetried=new Set(),radioPromise=null,radioQueue=null,radioController=null,transitionIntent=0,queueFinished=false,nearEnd=false,loadingSince=0;
@@ -476,6 +479,8 @@ async function playbackFailure(message){
   onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();playerState('error');
   $('#external-playback').innerHTML=externalLink(current)+(current.provider==='piped'?'<button id="playback-audius">Buscar alternativas en Audius</button>':'');
   if($('#playback-audius'))$('#playback-audius').onclick=()=>perform(async()=>{const q=(current.channel+' '+current.title).slice(0,120);history.pushState({},'','/');await discover();$('#online-query').value=q;$('#search-source').value='audius';await runSearch(q,false,'audius')});
+  // A song the listener just tapped never gets silently replaced by the next one.
+  if(current.id===pickedId&&recordedReference!==current.id){queueFinished=true;failStreak=0;$('#playback-status').textContent=message+' Pulsa ▶ para reintentarlo o elige otra canción.';notify(message);return}
   if(failStreak>=3){queueFinished=true;$('#playback-status').textContent=message+' Se detuvo tras varios fallos seguidos. Prueba otra canción.';notify(message+' La reproducción se ha detenido tras varios fallos.');return}
   if(audioIndex>=audioQueue.length-1)await ensureRadio(true);
   if(version!==playVersion)return;
@@ -544,7 +549,7 @@ async function ensureRadio(force=false){
 }
 function playList(list,index=0,shuffle=false){
   if(!list.length)return;const items=shuffle?[...list].sort(()=>Math.random()-.5):[...list];
-  audioQueue=items;audioIndex=shuffle?0:Math.max(0,index);failedReferences.clear();radioTried.clear();freshRetried.clear();failStreak=0;startOnline();
+  audioQueue=items;audioIndex=shuffle?0:Math.max(0,index);pickedId=audioQueue[audioIndex]?.id;failedReferences.clear();radioTried.clear();freshRetried.clear();failStreak=0;startOnline();
 }
 // Adds songs after what the user queued, before automatic radio picks. If the music had
 // already finished (or failed), the first added song starts right away.
@@ -553,10 +558,10 @@ function enqueue(items,next=false){
   if(audioIndex<0||!audioQueue.length){playList(items);return true}
   const radio=audioQueue.findIndex((x,i)=>i>audioIndex&&x.radio),at=next?audioIndex+1:radio<0?audioQueue.length:radio;
   audioQueue.splice(at,0,...items);
-  if(queueFinished||$('#online-player').dataset.state==='error'||$('#online-player').hidden){audioIndex=at;failStreak=0;startOnline();return true}
+  if(queueFinished||$('#online-player').dataset.state==='error'||$('#online-player').hidden){audioIndex=at;pickedId=audioQueue[at].id;failStreak=0;startOnline();return true}
   drawQueue();if(resumePendingEnd())return true;prefetchNext();return false;
 }
-function startRadio(v){audioQueue=[v];audioIndex=0;failedReferences.clear();radioTried.clear();freshRetried.clear();failStreak=0;startOnline();ensureRadio(true).then(added=>{if(added&&audioQueue[0]?.id===v.id)notify('Radio de «'+v.title+'»: canciones similares en la cola.')})}
+function startRadio(v){audioQueue=[v];audioIndex=0;pickedId=v.id;failedReferences.clear();radioTried.clear();freshRetried.clear();failStreak=0;startOnline();ensureRadio(true).then(added=>{if(added&&audioQueue[0]?.id===v.id)notify('Radio de «'+v.title+'»: canciones similares en la cola.')})}
 function setAutoplay(on){autoplay=on;try{localStorage.setItem('ivox-autoplay',on?'1':'0')}catch{}if(on)ensureRadio();else radioController?.abort();drawQueue();nowPlaying.state($('#online-player').dataset.state)}
 window.playLocal=(items,index)=>playList(items,index);
 
