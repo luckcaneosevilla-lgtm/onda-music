@@ -54,13 +54,22 @@ if POT_PROVIDER_URL:
     OPTIONS['extractor_args']['youtubepot-bgutilhttp']={'base_url':[POT_PROVIDER_URL]}
 
 _pot_state={'checked':0.0,'up':None};_pot_lock=threading.Lock()
+def pot_status():
+    """'unconfigured', 'up', 'down' or 'unchecked' - shown in /api/online/status."""
+    if not POT_PROVIDER_URL:return 'unconfigured'
+    with _pot_lock:state=_pot_state['up']
+    return 'unchecked' if state is None else 'up' if state else 'down'
 def pot_available():
     """True while the PO-token provider answers /ping (checked at most once a minute).
 
     A configured but unreachable provider cost every extraction a failed token
     attempt (8.7 s measured): yt-dlp then uses its usual clients directly.
     """
-    if not POT_PROVIDER_URL:return False
+    if not POT_PROVIDER_URL:
+        # A missing variable was silent: say so once, so the logs always answer.
+        with _pot_lock:
+            if _pot_state['up'] is None:_pot_state['up']=False;metric('pot_provider',status='unconfigured')
+        return False
     with _pot_lock:
         if time.monotonic()-_pot_state['checked']<60:return bool(_pot_state['up'])
         _pot_state['checked']=time.monotonic()

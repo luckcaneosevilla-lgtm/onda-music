@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 from youtube_provider import ProviderError, load_environment
 from music_provider import provider, valid_id, get_response
-from audio_resolver import resolver, AudioUnavailable, pot_available
+from audio_resolver import resolver, AudioUnavailable, pot_available, pot_status
 from audio_router import audio_router
 from audio_prepared import PreparedAudioCache
 prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata),partial=True,max_bytes=32*1024*1024,job_timeout=8,prefix_bytes=64*1024)
@@ -424,7 +424,7 @@ class Handler(BaseHTTPRequestHandler):
     def online(self,c,u,path,method):
         uid=u['id']
         if path=='/api/online/status' and method=='GET':
-            self.send(200,{'configured':True,'source':'piped','piped':provider.piped_available(),'allow_youtube_external':os.environ.get('ALLOW_YOUTUBE_EXTERNAL')=='1'});return
+            self.send(200,{'configured':True,'source':'piped','piped':provider.piped_available(),'allow_youtube_external':os.environ.get('ALLOW_YOUTUBE_EXTERNAL')=='1','pot_provider':pot_status()});return
         if path=='/api/online/search' and method=='GET':
             params=parse_qs(urlparse(self.path).query);q=' '.join(params.get('q',[''])[0].split());page=params.get('page',[''])[0]
             require(2<=len(q)<=120,'Escribe entre 2 y 120 caracteres para buscar.')
