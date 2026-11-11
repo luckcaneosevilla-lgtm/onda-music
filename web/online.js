@@ -126,7 +126,8 @@ function playerState(state){
   if(state==='loading'&&$('#online-player').dataset.state!=='loading')loadingSince=Date.now();
   $('#online-player').dataset.state=state;const playing=state==='playing';
   $('#np-toggle').setAttribute('aria-label',playing?'Pausar':'Reproducir');
-  if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':state==='paused'?'paused':'none';
+  // 'none' between songs lets iOS drop the lock-screen session while locked.
+  if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing||(state==='loading'&&playbackWanted)?'playing':state==='paused'?'paused':'none';
   nowPlaying.state(state);syncCards();
 }
 // Highlights the row of the current song anywhere it is listed, mirroring the bar state.
@@ -480,6 +481,7 @@ async function playbackFailure(message){
   if(version!==playVersion)return;
   if(audioIndex>=audioQueue.length-1){queueFinished=true;$('#playback-status').textContent=message+' Busca otra canción o cambia de fuente.';notify(message);return}
   $('#playback-status').textContent=message+' Pasamos a la siguiente…';notify(message+' Pasamos a la siguiente.');
+  if(document.hidden){audioIndex++;startOnline();return}
   advanceTimer=setTimeout(()=>{if(!me||version!==playVersion)return;audioIndex++;startOnline()},1200);
 }
 // Rapid taps on next/previous only move the selection; the song loads once the taps stop,
@@ -586,7 +588,7 @@ function nativeTrackEnded(){
   const raw=onlineAudio.duration,t=onlineAudio.currentTime;
   return onlineAudio.ended||nearTrackEnd()||(!onlineAudio.seeking&&Number.isFinite(raw)&&raw>0&&lastPlaybackTime>.25&&raw-t<.75);
 }
-onlineAudio.onerror=()=>{if(directPlayback){directPlayback=false;const item=audioQueue[audioIndex];freshRetried.add(item.id);startOnline(playbackWanted,1,onlineAudio.currentTime);return}const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(nearTrackEnd()){onlineAudio.onended();return}if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
+onlineAudio.onerror=()=>{if(directPlayback&&audioQueue[audioIndex]){directPlayback=false;const item=audioQueue[audioIndex];freshRetried.add(item.id);startOnline(playbackWanted,1,onlineAudio.currentTime);return}const src=onlineAudio.getAttribute('src');if(!playbackWanted||!src||src==='/silence.wav')return;resolutionBusy=false;recoveryInFlight=false;if(nearTrackEnd()){onlineAudio.onended();return}if(lastPlaybackTime>.25&&recoverCurrent())return;retryAudioLevel(playVersion)};
 onlineAudio.addEventListener('playing',()=>{if(onlineAudio.getAttribute('src')!=='/silence.wav'){recoveryInFlight=false;endedVersion=-1}});
 onlineAudio.onended=async event=>{
 
@@ -601,7 +603,7 @@ onlineAudio.onended=async event=>{
   playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';let added=await ensureRadio(true);
   // One more try after a moment: a request that just failed (network, rate limit) may answer now.
   if(version!==playVersion||intent!==transitionIntent)return;
-  if(!added&&autoplay&&audioIndex>=audioQueue.length-1){await new Promise(r=>setTimeout(r,3000));if(version===playVersion&&intent===transitionIntent)added=await ensureRadio(true)}
+  if(!added&&autoplay&&audioIndex>=audioQueue.length-1){if(!document.hidden)await new Promise(r=>setTimeout(r,3000));if(version===playVersion&&intent===transitionIntent)added=await ensureRadio(true)}
   if(version!==playVersion||intent!==transitionIntent)return;
   // The listener may have queued a song while recommendations were pending.
   if(audioIndex<audioQueue.length-1)advance();else{playbackWanted=false;queueFinished=true;playerState('paused');$('#playback-status').textContent='Fin de la cola. Añade una canción y sonará al momento.'}
@@ -625,6 +627,9 @@ function restoreOnlinePlayback(){
   if(document.hidden||!me||!playbackWanted||!audioQueue[audioIndex])return;
   if(onlineAudio.ended||(onlineAudio.paused&&nativeTrackEnded())){
     if(!resumePendingEnd()){endedVersion=-1;onlineAudio.onended()}return;
+  }
+  if($('#online-player').dataset.state==='loading'&&!resolutionBusy&&Date.now()-loadingSince>10000){
+    clearTimeout(watchdog);if(lastPlaybackTime>.25){recoveryAttempts=0;recoveryInFlight=false;if(recoverCurrent())return}retryAudioLevel();return;
   }
   if(onlineAudio.paused&&onlineAudio.getAttribute('src')){
     onlineAudio.autoplay=true;

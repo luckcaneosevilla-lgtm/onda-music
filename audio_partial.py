@@ -7,7 +7,7 @@ import http.client
 import re
 import struct
 import time
-from urllib.parse import urljoin
+from urllib.parse import parse_qs,urljoin,urlparse
 from audio_resolver import AudioUnavailable,YtDlpResolver
 from music_provider import get_response
 from streaming import content_range
@@ -57,6 +57,11 @@ def relocate_moov(raw,insert,old_start,total):
     if not tables:raise ValueError('missing_chunk_offsets')
     return bytes(result)
 
+def url_expiry(url):
+    """Wall-clock expiry signed into a googlevideo URL, or None."""
+    try:return float(parse_qs(urlparse(url).query)['expire'][0])
+    except (KeyError,IndexError,ValueError,TypeError):return None
+
 class RangeSource:
     def __init__(self,item,deadline=None):
         self.url=item['url'];self.mime=item.get('mime');self.agent=item.get('user_agent','Mozilla/5.0')
@@ -102,6 +107,7 @@ class RangeSource:
 
 class PartialMP4:
     def __init__(self,item,deadline=None,prefix_bytes=PREFIX):
+        self.url_expires=url_expiry(item['url'])
         self.source=RangeSource(item,deadline);self.initial=self.source.fetch(0,prefix_bytes-1);self.total=self.source.total
         windows=[(0,self.initial)];boxes=[];position=0
         def read_at(at,size,header=False):

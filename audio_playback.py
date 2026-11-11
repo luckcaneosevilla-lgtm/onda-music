@@ -42,11 +42,15 @@ class NativePlayback:
                 with self.cache.lock:
                     entry=self.cache.entries.get(vid)
                     view=entry.get('view') if entry and entry['expires']>time.monotonic() else None
-                    expires=entry['expires'] if view else choice['expires']
                 with self.lock:
                     views={id(v['view']):v['view'] for v in self.choices.values() if v['view'] is not None}
                     if view is not None and (id(view) in views or sum(v.memory_size for v in views.values())+view.memory_size<=self.max_bytes):
-                        choice['view']=view;choice['expires']=min(choice['expires'],expires)
+                        # Bound the attempt by the signed URL, not by the cache
+                        # entry: an entry nearing its reuse window must not break
+                        # a song that is already playing.
+                        signed=getattr(view,'url_expires',None)
+                        choice['hard']=time.monotonic()+(signed-time.time()-60) if signed else choice['expires']
+                        choice['view']=view;choice['expires']=min(choice['expires'],choice['hard'])
             except BaseException:
                 choice['error']=True
                 raise
@@ -55,6 +59,10 @@ class NativePlayback:
         if choice['error']:raise AudioUnavailable('playback_prepare_failed')
         view=choice['view']
         if view is None:return None  # This attempt stays on the original route.
+        with self.lock:
+            # Each request of a live attempt extends it (paused or long songs),
+            # never past the URL's own validity.
+            if not choice['error']:choice['expires']=max(choice['expires'],min(time.monotonic()+self.ttl,choice.get('hard',choice['expires'])))
         start=0;end=view.total-1
         if range_header:
             match=re.fullmatch(r'bytes=(\d*)-(\d*)',range_header)

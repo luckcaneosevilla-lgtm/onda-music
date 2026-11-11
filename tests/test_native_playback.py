@@ -72,5 +72,29 @@ class NativePlaybackTests(unittest.TestCase):
         player.choices[('user','attempt')]['expires']=time.monotonic()-.01
         with self.assertRaises(AudioUnavailable):player.open(('user','attempt'),'abcdefghijk','bytes=30-80')
 
+    def test_attempt_outlives_short_cache_entry_window(self):
+        # A URL resolved 25 min earlier leaves the cache entry a short window;
+        # the playing attempt must keep its view while the signed URL is valid.
+        cache=self.cache();player=NativePlayback(cache)
+        response=player.open(('user','attempt'),'abcdefghijk','bytes=0-1');response.close()
+        with cache.lock:cache.entries['abcdefghijk']['expires']=time.monotonic()-1
+        choice=player.choices[('user','attempt')]
+        self.assertGreater(choice['expires'],time.monotonic()+60)
+        self.consume(player.open(('user','attempt'),'abcdefghijk','bytes=30-80'))
+
+    def test_live_attempt_slides_but_not_past_signed_url(self):
+        cache=self.cache();player=NativePlayback(cache,ttl=100)
+        response=player.open(('user','attempt'),'abcdefghijk','bytes=0-1');response.close()
+        choice=player.choices[('user','attempt')]
+        choice['expires']=time.monotonic()+5;choice['hard']=time.monotonic()+50
+        self.consume(player.open(('user','attempt'),'abcdefghijk','bytes=30-80'))
+        self.assertAlmostEqual(choice['expires'],choice['hard'],delta=.5)
+
+    def test_prepared_view_uses_signed_url_expiry(self):
+        signed=dict(ITEM,url=ITEM['url']+'&expire=%d'%(time.time()+6*3600),expires=time.time()+120)
+        cache=PreparedAudioCache(lambda *args:signed,partial=True,prefix_bytes=65536);self.addCleanup(cache.close)
+        cache._prepare('abcdefghijk',{},time.perf_counter())
+        with cache.lock:self.assertGreater(cache.entries['abcdefghijk']['expires'],time.monotonic()+1700)
+
 
 if __name__=='__main__':unittest.main()

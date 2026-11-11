@@ -264,7 +264,11 @@ class PreparedAudioCache:
         self._stage(vid,'partial_download')
         view=PartialMP4(resolved,deadline=started+self.job_timeout,prefix_bytes=self.prefix_bytes)
         view.prepare_ms=round((time.perf_counter()-started)*1000,2)
-        lifetime=min(self.ttl,float(resolved.get('expires',time.time()+self.ttl))-time.time()-30)
+        # The resolver's cache expiry is a local reuse window (30 min from
+        # resolution), not the URL's validity. Bounding the view by it made a
+        # song resolved 25 min earlier break a few minutes into playback.
+        valid_until=view.url_expires-60 if view.url_expires else float(resolved.get('expires',time.time()+self.ttl))-30
+        lifetime=min(self.ttl,valid_until-time.time())
         if lifetime<=0:raise AudioUnavailable('partial_url_expired')
         with self.lock:
             if self.stopping.is_set():raise AudioUnavailable('preparation_cancelled')
