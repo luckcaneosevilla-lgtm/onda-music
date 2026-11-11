@@ -10,7 +10,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 (() => {
   const loaded=document.querySelector('meta[name="ivox-version"]')?.content;
   if(!loaded)return;
-  const release=document.querySelector('meta[name="ivox-release"]')?.content||'5.0';
+  const release=document.querySelector('meta[name="ivox-release"]')?.content||'6.0';
   const badge=document.createElement('small');badge.className='app-version';badge.textContent='Ivox-Astra '+release;badge.title='Compilación '+loaded;document.body.append(badge);
   const notice=document.createElement('aside');notice.className='app-update';notice.hidden=true;notice.setAttribute('role','status');
   const text=document.createElement('span'),button=document.createElement('button');button.textContent='Recargar ahora';button.className='primary';

@@ -20,4 +20,13 @@
 @keyframes anubis-groove{0%,100%{transform:rotate(4deg)}50%{transform:rotate(-9deg)}}
 @keyframes anubis-staff{0%,100%{transform:rotate(0)}50%{transform:rotate(-14deg)}}
 @keyframes anubis-eyes{0%,100%{fill:#4cc3ff;opacity:.85}50%{fill:#d6f4ff;opacity:1}}
-@media(prefers-reduced-motion:reduce){.anubis-body,.anubis-head,.anubis-notes,.anubis-awake .anubis-arm{animation:none}.anubis-awake .anubis-eye{animation:none;fill:#7fd8ff}}
+/* 6.0: night sky with shooting stars behind Anubis. */
+.release-art{position:relative;overflow:hidden}.release-art>.anubis,.release-art>.release-version{position:relative;z-index:1}
+.release-sky{position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 80% at 70% 0%,#1d2f5c 0%,#10182b 60%)}
+.sky-star{position:absolute;width:3px;height:3px;border-radius:50%;background:#fff;box-shadow:0 0 6px 1px #bfe6ff;animation:sky-twinkle 2.4s ease-in-out infinite}
+.shooting-star{position:absolute;top:8%;left:105%;width:130px;height:2px;border-radius:2px;background:linear-gradient(90deg,#fff 0%,#9fdcff 18%,rgba(127,216,255,0) 100%);filter:drop-shadow(0 0 6px #7fd8ff);transform:rotate(-35deg);transform-origin:left center;animation:shooting-star 3.6s ease-in infinite}
+.shooting-star::before{content:"";position:absolute;left:-3px;top:-3px;width:8px;height:8px;border-radius:50%;background:#fff;box-shadow:0 0 12px 4px #9fdcff}
+.shooting-star.late{top:30%;width:90px;animation-duration:4.8s;animation-delay:1.9s}
+@keyframes shooting-star{0%{transform:rotate(-35deg) translateX(0);opacity:0}6%{opacity:1}38%{transform:rotate(-35deg) translateX(-420px);opacity:0}100%{transform:rotate(-35deg) translateX(-420px);opacity:0}}
+@keyframes sky-twinkle{0%,100%{opacity:.25;transform:scale(.7)}50%{opacity:1;transform:scale(1.2)}}
+@media(prefers-reduced-motion:reduce){.sky-star,.shooting-star{animation:none}.shooting-star{display:none}.anubis-body,.anubis-head,.anubis-notes,.anubis-awake .anubis-arm{animation:none}.anubis-awake .anubis-eye{animation:none;fill:#7fd8ff}}

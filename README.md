@@ -1,4 +1,9 @@
-# Ivox-Astra 5.0
+# Ivox-Astra 6.0
+
+La versión 6.0 hace que la música suene igual de bien en el ordenador que en el iPhone: todos los navegadores reciben el audio por la ruta nativa del servidor (los enlaces de YouTube que resuelve el servidor van ligados a su IP y fallaban en escritorio). La pantalla de novedades estrena un cielo nocturno con estrellas fugaces detrás de Anubis.
+
+## Novedades de la versión 5.0
+
 
 La versión 5.0 reproduce siempre la canción que eliges (si falla, no salta sola a otra), mantiene la cola sonando con el iPhone bloqueado, guarda descargas dentro de la app para escucharlas sin conexión y evita que el registro y el inicio de sesión se queden esperando al resto de escrituras. Anubis despierta: baila y sus ojos brillan en azul.
 

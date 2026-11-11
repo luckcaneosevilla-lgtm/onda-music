@@ -28,7 +28,7 @@ from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
 ROOT = Path(__file__).resolve().parent
-RELEASE_VERSION = '5.0'
+RELEASE_VERSION = '6.0'
 # Content-derived release ID changes automatically on every app code update.
 _release_files=sorted(list((ROOT/'web').rglob('*'))+list(ROOT.glob('*.py')))
 APP_VERSION=hashlib.sha256(b''.join(str(p.relative_to(ROOT)).encode()+p.read_bytes() for p in _release_files if p.is_file())).hexdigest()[:10]

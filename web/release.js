@@ -1,9 +1,11 @@
 // Release notice shared by existing accounts and first-time listeners.
 (() => {
   // The release number comes from the server (RELEASE_VERSION) so the notice never drifts.
-  const version=document.querySelector('meta[name="ivox-release"]')?.content||'5.0',seen=new Set();
+  const version=document.querySelector('meta[name="ivox-release"]')?.content||'6.0',seen=new Set();
   // From 5.0 Anubis comes alive: a full dance and glowing blue eyes.
   const era=parseFloat(version)>=5?' anubis-awake':'';
+  // From 6.0 a night sky crosses the art panel: twinkling stars and shooting stars.
+  const sky=parseFloat(version)>=6?`<div class="release-sky" aria-hidden="true">${[[12,18],[78,10],[30,62],[86,48],[55,30],[20,86],[70,80],[42,8],[92,72],[6,50]].map(([x,y],i)=>`<i class="sky-star" style="left:${x}%;top:${y}%;animation-delay:${(i*.37)%2.4}s"></i>`).join('')}<span class="shooting-star"></span><span class="shooting-star late"></span></div>`:'';
   const mascot=`<svg class="anubis${era}" viewBox="0 0 240 260" aria-hidden="true" fill="none">
     <defs><filter id="anubis-glow" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
     <ellipse cx="120" cy="242" rx="66" ry="7" fill="#d4af37" opacity=".15"/>
@@ -30,13 +32,13 @@
   const modal=document.createElement('dialog');modal.className='release-dialog';
   modal.setAttribute('aria-labelledby','release-title');modal.setAttribute('aria-describedby','release-description');
   modal.innerHTML=`<button class="release-close" aria-label="Cerrar novedades">×</button>
-    <div class="release-art">${mascot}<span class="release-version">Ivox-Astra ${version}</span></div>
+    <div class="release-art">${sky}${mascot}<span class="release-version">Ivox-Astra ${version}</span></div>
     <div class="release-copy"><h1 id="release-title">Tu música. Una nueva era.</h1>
     <p id="release-description">Ivox-Astra ${version} ya está aquí. Tu música, con menos espera y más por descubrir.</p>
-    <ul><li><strong>Suena la que eliges.</strong><span>Pulsas una canción y empieza esa, al instante. Si algo falla, se queda contigo para reintentarlo.</span></li>
+    <ul><li><strong>Tu música suena también en el ordenador.</strong><span>Ordenador, iPhone o iPad: todas las canciones llegan por el mismo camino rápido y estable.</span></li>
+    <li><strong>Suena la que eliges.</strong><span>Pulsas una canción y empieza esa, al instante. Si algo falla, se queda contigo para reintentarlo.</span></li>
     <li><strong>Música sin cortes con el iPhone bloqueado.</strong><span>La cola sigue sonando de una canción a la siguiente aunque apagues la pantalla.</span></li>
-    <li><strong>Descargas dentro de la app.</strong><span>Guarda tus canciones y escúchalas sin conexión.</span></li>
-    <li><strong>Anubis ha despertado.</strong><span>Baila contigo y sus ojos brillan en azul.</span></li></ul>
+    <li><strong>Un cielo nuevo.</strong><span>Anubis baila bajo estrellas fugaces, con sus ojos azules encendidos.</span></li></ul>
     <button class="primary release-start">Entrar a Ivox-Astra ${version}</button></div>`;
   document.body.append(modal);
   let account=null;
