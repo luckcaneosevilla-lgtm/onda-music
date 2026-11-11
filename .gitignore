@@ -23,3 +23,7 @@ Thumbs.db
 twa-manifest.json
 *.apk
 *.aab
+
+# YouTube account cookies (IVOX_YTDLP_COOKIES secret) never go in git
+cookies.txt
+*cookies*.txt

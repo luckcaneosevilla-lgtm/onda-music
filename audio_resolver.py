@@ -11,6 +11,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import socket
@@ -27,6 +28,13 @@ def is_speculative():return getattr(speculative,'on',False)
 
 class AudioUnavailable(Exception):pass
 
+_cookie_warned=[0.0]
+def cookie_warning(reason):
+    """Expired/rejected account cookies: say so in the logs, at most every 10 minutes."""
+    if time.monotonic()-_cookie_warned[0]<600:return
+    _cookie_warned[0]=time.monotonic()
+    metric('ytdlp_cookies',status='rejected',reason=reason,action='export a fresh cookies.txt from the secondary account into IVOX_YTDLP_COOKIES')
+
 # m4a first: Safari/iOS plays AAC everywhere; HLS/DASH manifests are never used and cost ~0.4 s.
 # Plain AAC-LC (itag 140) before any other m4a: Safari reports HE-AAC (139, mp4a.40.5) at
 # about twice its length, so the song ends and minutes of silence follow.
@@ -35,6 +43,69 @@ OPTIONS={'quiet':True,'no_warnings':True,'noprogress':True,'format':'bestaudio[e
 # download=False: these options only apply if yt-dlp itself downloads media.
 OPTIONS.update(http_chunk_size=8*1024*1024,concurrent_fragment_downloads=8,
                socket_timeout=3,retries=0,extractor_retries=0)
+# --force-ipv4: datacenter IPv6 ranges are flagged by YouTube more often.
+OPTIONS['source_address']='0.0.0.0'
+
+# Layer 1 - PO tokens. POT_PROVIDER_URL points at a private bgutil-ytdlp-pot-provider
+# service; the yt-dlp plugin (requirements.txt) mints tokens there. With it, the first
+# profile uses the clients that work best with PO tokens (mweb, android_vr).
+POT_PROVIDER_URL=os.environ.get('POT_PROVIDER_URL','').strip().rstrip('/')
+if POT_PROVIDER_URL:
+    OPTIONS['extractor_args']['youtubepot-bgutilhttp']={'base_url':[POT_PROVIDER_URL]}
+
+_pot_state={'checked':0.0,'up':False};_pot_lock=threading.Lock()
+def pot_available():
+    """True while the PO-token provider answers /ping (checked at most once a minute).
+
+    A configured but unreachable provider cost every extraction a failed token
+    attempt (8.7 s measured): yt-dlp then uses its usual clients directly.
+    """
+    if not POT_PROVIDER_URL:return False
+    with _pot_lock:
+        if time.monotonic()-_pot_state['checked']<60:return _pot_state['up']
+        _pot_state['checked']=time.monotonic()
+    try:
+        parsed=urlparse(POT_PROVIDER_URL)
+        factory=http.client.HTTPSConnection if parsed.scheme=='https' else http.client.HTTPConnection
+        with closing(factory(parsed.netloc,timeout=1)) as conn:
+            conn.request('GET',(parsed.path or '')+'/ping');up=conn.getresponse().status==200
+    except (OSError,http.client.HTTPException):up=False
+    with _pot_lock:
+        if up!=_pot_state['up']:metric('pot_provider',status='up' if up else 'down')
+        _pot_state['up']=up
+    return up
+
+# Layer 4 - request pacing, opt-in. Each extraction makes several YouTube requests,
+# so a 1 s pause per request would exceed the extraction timeout and fail Play.
+# (--sleep-interval/--max-sleep-interval only apply to downloads, which never happen here.)
+try:_sleep=float(os.environ.get('IVOX_YTDLP_SLEEP_REQUESTS','0') or 0)
+except ValueError:_sleep=0
+if _sleep>0:OPTIONS['sleep_interval_requests']=min(_sleep,2)
+
+# Layer 2 - cookies of a secondary, disposable YouTube account (Netscape format), from
+# a secret's contents (IVOX_YTDLP_COOKIES) or a mounted file (IVOX_YTDLP_COOKIES_FILE).
+# They are copied to a private temporary file because yt-dlp writes refreshed cookies
+# back and secret mounts are read-only. Contents are never logged.
+def _prepare_cookies():
+    text=os.environ.get('IVOX_YTDLP_COOKIES','')
+    source=os.environ.get('IVOX_YTDLP_COOKIES_FILE','').strip()
+    if not text and source:
+        try:text=Path(source).read_text(encoding='utf-8')
+        except OSError:metric('ytdlp_cookies',status='unreadable');return None
+    if not text.strip():return None
+    # Secret UIs often store a pasted file with literal \t and \n escapes.
+    if '\t' not in text and '\t' in text:text=text.replace('\t','\t').replace('\n','\n')
+    if not text.lstrip().startswith(('# Netscape','# HTTP Cookie File')):
+        text='# Netscape HTTP Cookie File\n'+text
+    try:
+        handle,path=tempfile.mkstemp(prefix='ivox-cookies-',suffix='.txt')
+        with os.fdopen(handle,'w',encoding='utf-8') as f:f.write(text if text.endswith('\n') else text+'\n')
+        os.chmod(path,0o600)
+    except OSError:metric('ytdlp_cookies',status='unwritable');return None
+    metric('ytdlp_cookies',status='loaded',entries=sum(1 for line in text.splitlines() if line.strip() and not line.startswith('#')))
+    return path
+COOKIE_FILE=_prepare_cookies()
+if COOKIE_FILE:OPTIONS['cookiefile']=COOKIE_FILE
 # One request per child. Only one YoutubeDL instance exists at a time, and its
 # context manager closes any challenge runtime before trying another profile.
 WORKER='''import copy,gc,json,re,sys
@@ -42,15 +113,16 @@ from yt_dlp import YoutubeDL
 class Quiet:
     def debug(self,m):pass
     info=warning=error=debug
-options=json.loads(sys.argv[1])
+options=json.loads(sys.argv[1]);pot=options.pop('ivox_pot',False)
 parts=sys.stdin.readline().strip().split();video_id=parts[0] if parts else ''
 mode=parts[1] if len(parts)>1 else '';url=None;failure='extract_failed';engine='yt-dlp'
 def reason(error):
     text=str(error).lower()
-    for needle,code in [('not a bot','bot_check'),('sign in','sign_in_required'),('javascript runtime','javascript_required'),('requested format','format_unavailable'),('http error 403','upstream_403'),('timed out','network_timeout'),('not available','video_unavailable')]:
+    for needle,code in [('cookies are no longer valid','cookies_expired'),('not a bot','bot_check'),('sign in','sign_in_required'),('javascript runtime','javascript_required'),('requested format','format_unavailable'),('http error 403','upstream_403'),('timed out','network_timeout'),('not available','video_unavailable')]:
         if needle in text:return code
     return 'extract_failed'
 profiles=[('yt-dlp-direct',['visionos']),('yt-dlp-compatible',None),('yt-dlp-alt',['tv','web_safari','mweb','visionos'])]
+if pot:profiles.insert(0,('yt-dlp-pot',['mweb','android_vr']))
 if mode=='standard':profiles=profiles[1:]
 elif mode=='compatible':profiles=profiles[2:]+profiles[1:2]
 if re.fullmatch(r'[A-Za-z0-9_-]{11}',video_id):
@@ -127,7 +199,7 @@ class YtDlpResolver:
             vendor=Path(__file__).resolve().parent/'.vendor'
             if vendor.exists() and importlib.util.find_spec('yt_dlp') is None:
                 env['PYTHONPATH']=str(vendor)+(os.pathsep+env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
-            process=subprocess.Popen([sys.executable,'-c',WORKER,json.dumps(OPTIONS)],stdin=subprocess.PIPE,
+            process=subprocess.Popen([sys.executable,'-c',WORKER,json.dumps(dict(OPTIONS,ivox_pot=pot_available()))],stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,encoding='utf-8',errors='replace',
                 env=env,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),start_new_session=os.name!='nt')
             mode=' standard' if self.standard.get(video_id,0)>time.time() else ' compatible' if self.compatible.get(video_id,0)>time.time() else ''
@@ -137,7 +209,10 @@ class YtDlpResolver:
             answer=json.loads(output)
             if answer.get('id')!=video_id:raise AudioUnavailable('invalid_worker_response')
             engine=answer.get('engine','yt-dlp');url=answer.get('url')
-            if not url:raise AudioUnavailable(answer.get('error') or 'extract_failed')
+            if not url:
+                error=answer.get('error') or 'extract_failed'
+                if COOKIE_FILE and error in ('cookies_expired','sign_in_required'):cookie_warning(error)
+                raise AudioUnavailable(error)
             with self.guard:
                 if len(self.engines)>=300:self.engines.pop(next(iter(self.engines)))
                 self.engines[video_id]=engine

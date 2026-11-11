@@ -1,2 +1,4 @@
 yt-dlp[default]==2026.10.26
 ytmusicapi==1.12.3
+# Layer 1: PO tokens minted by the private bgutil provider service (POT_PROVIDER_URL).
+bgutil-ytdlp-pot-provider==2.0.2

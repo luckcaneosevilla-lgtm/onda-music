@@ -6,8 +6,9 @@ COPY --from=denoland/deno:bin-2.3.3 /deno /usr/local/bin/deno
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# Fail the build instead of deploying an unsupported/missing challenge runtime.
-RUN deno --version && python -c "import yt_dlp, yt_dlp_ejs; import subprocess; v=subprocess.check_output(['deno','--version'],text=True).split()[1]; assert tuple(map(int,v.split('.')[:2])) >= (2,3), v"
+# Fail the build instead of deploying an unsupported/missing challenge runtime or
+# without the PO-token plugin (docs/YOUTUBE_BOT_CHECK.md).
+RUN deno --version && python -c "import yt_dlp, yt_dlp_ejs, yt_dlp_plugins.extractor.getpot_bgutil_http; import subprocess; v=subprocess.check_output(['deno','--version'],text=True).split()[1]; assert tuple(map(int,v.split('.')[:2])) >= (2,3), v"
 COPY . .
 EXPOSE 8000
 CMD ["python", "server.py", "serve", "--port", "8000"]
