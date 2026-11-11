@@ -35,6 +35,13 @@ class LayerTests(unittest.TestCase):
         # Cached for a minute: no second network check per song.
         with patch('http.client.HTTPConnection') as conn:self.assertFalse(a.pot_available());conn.assert_not_called()
 
+    def test_first_check_runs_even_right_after_boot(self):
+        a=fresh(POT_PROVIDER_URL='http://127.0.0.1:9')
+        # A container that booted 5 s ago: monotonic() is small.
+        with patch.object(a.time,'monotonic',return_value=5.0),patch.object(a,'metric'):
+            a.pot_available()
+        self.assertEqual(a.pot_status(),'down')
+
     def test_missing_provider_url_is_logged_and_reported(self):
         a=fresh()
         self.assertEqual(a.pot_status(),'unconfigured')

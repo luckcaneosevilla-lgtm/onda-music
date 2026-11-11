@@ -53,7 +53,9 @@ POT_PROVIDER_URL=os.environ.get('POT_PROVIDER_URL','').strip().rstrip('/')
 if POT_PROVIDER_URL:
     OPTIONS['extractor_args']['youtubepot-bgutilhttp']={'base_url':[POT_PROVIDER_URL]}
 
-_pot_state={'checked':0.0,'up':None};_pot_lock=threading.Lock()
+# -inf, not 0: time.monotonic() counts from boot, so in a fresh container it is
+# below 60 and a 0 start skipped every check during the first minute.
+_pot_state={'checked':float('-inf'),'up':None};_pot_lock=threading.Lock()
 def pot_status():
     """'unconfigured', 'up', 'down' or 'unchecked' - shown in /api/online/status."""
     if not POT_PROVIDER_URL:return 'unconfigured'
