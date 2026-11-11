@@ -1,4 +1,9 @@
-# Ivox-Astra 4.0
+# Ivox-Astra 5.0
+
+La versión 5.0 reproduce siempre la canción que eliges (si falla, no salta sola a otra), mantiene la cola sonando con el iPhone bloqueado, guarda descargas dentro de la app para escucharlas sin conexión y evita que el registro y el inicio de sesión se queden esperando al resto de escrituras. Anubis despierta: baila y sus ojos brillan en azul.
+
+## Novedades de la versión 4.0
+
 
 La versión 4.0 reduce el prefijo preparado de 512 a 64 KiB, reserva capacidad para la canción elegida al pulsar Play y conserva los mismos offsets MP4 entre las peticiones de Safari. Comparte las resoluciones simultáneas y aplica los reintentos una sola vez por intento. El nombre, el arranque, el manifiesto y las novedades muestran **Ivox-Astra 4.0**. Análisis, decisiones y resultados verificables: [Ivox-Astra 4.0](docs/ASTRA_4.md).
 

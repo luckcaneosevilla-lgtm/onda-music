@@ -15,7 +15,7 @@ with sync_playwright() as p:
  browser=p.chromium.launch()
  context=browser.new_context(user_agent=UA,viewport={'width':390,'height':844},is_mobile=True,has_touch=True)
  version=context.request.get(origin+'/version.json').json()
- assert version['release']=='4.0',version
+ assert version['release']=='5.0',version
  response=context.request.post(origin+'/api/register',data={'name':'Astra playback QA','email':secrets.token_hex(12)+'@ivox-qa.invalid','password':secrets.token_urlsafe(28)})
  assert response.ok,{'registration_status':response.status}
  data=context.request.get(origin+'/api/online/search',params={'q':'Feid','filter':'songs'},timeout=45000).json()

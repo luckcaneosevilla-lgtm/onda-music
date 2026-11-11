@@ -28,7 +28,7 @@ from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
 ROOT = Path(__file__).resolve().parent
-RELEASE_VERSION = '4.0'
+RELEASE_VERSION = '5.0'
 # Content-derived release ID changes automatically on every app code update.
 _release_files=sorted(list((ROOT/'web').rglob('*'))+list(ROOT.glob('*.py')))
 APP_VERSION=hashlib.sha256(b''.join(str(p.relative_to(ROOT)).encode()+p.read_bytes() for p in _release_files if p.is_file())).hexdigest()[:10]
@@ -50,7 +50,10 @@ def forget_sessions(token=None):
 def session_cookie(token):
     secure='; Secure' if os.environ.get('ONDA_SECURE_COOKIE')=='1' else ''
     return f'onda={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}{secure}'
-LIGHT_WRITES = re.compile(r'/api/(audio/prefetch|online/items/|online/recent$|online/playlists/[a-f0-9]{32}/items$)')
+# Login/register/logout writes are few and self-contained: as one atomic batch they no
+# longer hold the process-wide write lock for the whole request (a stuck Turso round
+# trip there made every sign-up wait 60 s or more).
+LIGHT_WRITES = re.compile(r'/api/(audio/prefetch|online/items/|online/recent$|online/playlists/[a-f0-9]{32}/items$|login$|register$|logout$)')
 TURSO = turso.Client(os.environ['TURSO_DATABASE_URL'], os.environ['TURSO_AUTH_TOKEN']) if os.environ.get('TURSO_DATABASE_URL') and os.environ.get('TURSO_AUTH_TOKEN') else None
 
 def now(): return int(time.time())

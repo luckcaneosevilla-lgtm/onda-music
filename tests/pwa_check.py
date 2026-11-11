@@ -11,7 +11,7 @@ for path,mime in [('/manifest.json','application/manifest+json'),('/service-work
     report['resources'][path]={'status':r.status,'type':r.getheader('Content-Type'),'bytes':len(body)}
     assert r.status==200 and r.getheader('Content-Type').startswith(mime),report['resources'][path]
     if path=='/manifest.json':
-        manifest=json.loads(body);assert manifest['name']=='Ivox-Astra 4.0' and manifest['version']=='4.0' and manifest['display']=='standalone';assert {i['sizes'] for i in manifest['icons']}=={'192x192','512x512'}
+        manifest=json.loads(body);assert manifest['name']=='Ivox-Astra 5.0' and manifest['version']=='5.0' and manifest['display']=='standalone';assert {i['sizes'] for i in manifest['icons']}=={'192x192','512x512'}
     if path.endswith('.png'):
         assert body[:8]==b'\x89PNG\r\n\x1a\n'
         width=int.from_bytes(body[16:20],'big');height=int.from_bytes(body[20:24],'big');expected=192 if '192' in path else 512;assert width==height==expected

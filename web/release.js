@@ -1,7 +1,7 @@
 // Release notice shared by existing accounts and first-time listeners.
 (() => {
   // The release number comes from the server (RELEASE_VERSION) so the notice never drifts.
-  const version=document.querySelector('meta[name="ivox-release"]')?.content||'4.0',seen=new Set();
+  const version=document.querySelector('meta[name="ivox-release"]')?.content||'5.0',seen=new Set();
   // From 5.0 Anubis comes alive: a full dance and glowing blue eyes.
   const era=parseFloat(version)>=5?' anubis-awake':'';
   const mascot=`<svg class="anubis${era}" viewBox="0 0 240 260" aria-hidden="true" fill="none">
@@ -33,9 +33,10 @@
     <div class="release-art">${mascot}<span class="release-version">Ivox-Astra ${version}</span></div>
     <div class="release-copy"><h1 id="release-title">Tu música. Una nueva era.</h1>
     <p id="release-description">Ivox-Astra ${version} ya está aquí. Tu música, con menos espera y más por descubrir.</p>
-    <ul><li><strong>Reproducción más rápida en iPhone.</strong><span>Inicio ligero y preparación prioritaria al pulsar Play.</span></li>
-    <li><strong>Continuidad y saltos seguros.</strong><span>Una misma fuente de audio desde el primer instante hasta el final.</span></li>
-    <li><strong>Todo tu universo musical.</strong><span>Abre el reproductor completo, sigue la letra y cambia de canción deslizando.</span></li></ul>
+    <ul><li><strong>Suena la que eliges.</strong><span>Pulsas una canción y empieza esa, al instante. Si algo falla, se queda contigo para reintentarlo.</span></li>
+    <li><strong>Música sin cortes con el iPhone bloqueado.</strong><span>La cola sigue sonando de una canción a la siguiente aunque apagues la pantalla.</span></li>
+    <li><strong>Descargas dentro de la app.</strong><span>Guarda tus canciones y escúchalas sin conexión.</span></li>
+    <li><strong>Anubis ha despertado.</strong><span>Baila contigo y sus ojos brillan en azul.</span></li></ul>
     <button class="primary release-start">Entrar a Ivox-Astra ${version}</button></div>`;
   document.body.append(modal);
   let account=null;

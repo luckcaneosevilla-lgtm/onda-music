@@ -82,7 +82,9 @@ class Client:
                     if stamp - used < idle: return conn
                     conn.close()
         factory = http.client.HTTPSConnection if self.secure else http.client.HTTPConnection
-        return factory(self.host, timeout=30)
+        # A Turso round trip takes well under a second; a dead socket must not hold the
+        # write lock for half a minute (twice, with the retry).
+        return factory(self.host, timeout=12)
 
     def release(self, conn):
         with self.pool_guard:
