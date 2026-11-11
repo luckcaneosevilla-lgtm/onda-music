@@ -56,9 +56,30 @@ class IOSProxyTests(unittest.TestCase):
         resolver=YtDlpResolver();resolver.slot=Mock();resolver.slot.acquire.return_value=False
         started=time.perf_counter()
         with self.assertRaisesRegex(AudioUnavailable,'worker_unavailable'):resolver.run('abcdefghijk')
-        resolver.slot.acquire.assert_called_once_with(timeout=.2)
+        resolver.slot.acquire.assert_called_once_with(timeout=4)
         self.assertLess(time.perf_counter()-started,.1)
-        self.assertLessEqual(resolver.timeout,10)
+        # Slot wait + extraction stay inside the client's 30 s startup watchdog.
+        self.assertLessEqual(4+resolver.timeout,16)
+
+    def test_speculative_preparation_never_runs_extraction(self):
+        from audio_resolver import speculative
+        resolver=YtDlpResolver();resolver.slot=Mock()
+        speculative.on=True
+        try:
+            with self.assertRaisesRegex(AudioUnavailable,'background_deferred'):resolver.run('abcdefghijk')
+        finally:speculative.on=False
+        resolver.slot.acquire.assert_not_called()
+
+    def test_play_joins_extraction_already_running_for_same_song(self):
+        resolver=YtDlpResolver();release=threading.Event();calls=[]
+        def run(video_id,background=False):
+            calls.append(video_id);release.wait(2)
+            return 'https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&itag=140&expire='+str(int(time.time()+3600))
+        resolver.run=run
+        first=threading.Thread(target=resolver.resolve,args=('abcdefghijk',));first.start()
+        time.sleep(.3);threading.Timer(.5,release.set).start()
+        self.assertTrue(resolver.resolve('abcdefghijk')['url'].startswith('https://'))
+        first.join(3);self.assertEqual(calls,['abcdefghijk'])
 
     def test_proxy_flushes_first_8k_before_upstream_finishes(self):
         gate=threading.Event();chunks=[]

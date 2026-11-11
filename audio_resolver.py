@@ -20,6 +20,11 @@ from youtube_provider import ProviderError
 from streaming import PrefixCache, content_range, prefix_response, metric
 from audio_cache import SharedAudioCache
 
+# Set by speculative preparation threads. Speculative work never runs yt-dlp
+# (docs/AUDIO_EXTRACTION_RECOVERY.md): with one slot it made a tapped song fail.
+speculative=threading.local()
+def is_speculative():return getattr(speculative,'on',False)
+
 class AudioUnavailable(Exception):pass
 
 # m4a first: Safari/iOS plays AAC everywhere; HLS/DASH manifests are never used and cost ~0.4 s.
@@ -80,7 +85,7 @@ class YtDlpResolver:
     def __init__(self,size=1,recycle=None):
         # Retain constructor compatibility, but never create a process pool.
         self.cache={};self.failures={};self.failure_reasons={};self.refreshes={};self.guard=threading.Lock();self.store=None
-        self.locks={};self.timeout=max(1,min(10,float(os.environ.get('IVOX_EXTRACT_TIMEOUT','6'))));self.slot=threading.BoundedSemaphore(1)
+        self.locks={};self.timeout=max(1,min(12,float(os.environ.get('IVOX_EXTRACT_TIMEOUT','9'))));self.slot=threading.BoundedSemaphore(1)
         self.engines={};self.standard={};self.compatible={}
         self.prefixes=PrefixCache(limit=2*1024*1024,fragment=65536)
         self.shared=None;self.cache_ttl=1800
@@ -113,7 +118,9 @@ class YtDlpResolver:
         except sqlite3.Error:pass
     def run(self,video_id,background=False):
         if background:raise AudioUnavailable('background_deferred')
-        if not self.slot.acquire(timeout=.2):raise AudioUnavailable('worker_unavailable')
+        if is_speculative():raise AudioUnavailable('background_deferred')
+        # Bounded wait behind another listener's Play instead of failing in 0.2 s.
+        if not self.slot.acquire(timeout=4):raise AudioUnavailable('worker_unavailable')
         process=None;started=time.perf_counter();engine='yt-dlp';url=None
         try:
             env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'};env['PYTHONIOENCODING']='utf-8'
@@ -177,7 +184,9 @@ class YtDlpResolver:
             return hit
         with self.guard:
             entry=self.locks.setdefault(video_id,[threading.Lock(),0]);entry[1]+=1
-        lock=entry[0];acquired=lock.acquire(timeout=.2)
+        # A Play joins an extraction already running for this song (preparation,
+        # Safari's parallel range probe) and then reuses its cached result.
+        lock=entry[0];acquired=lock.acquire(timeout=.2 if background or is_speculative() else 2*self.timeout+2)
         if not acquired:
             with self.guard:
                 entry[1]-=1

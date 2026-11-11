@@ -17,7 +17,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urljoin
-from audio_resolver import AudioUnavailable,YtDlpResolver
+from audio_resolver import AudioUnavailable,YtDlpResolver,speculative
 from music_provider import get_response
 from streaming import content_range,metric
 from youtube_provider import ProviderError
@@ -144,7 +144,9 @@ class PreparedAudioCache:
             started=time.perf_counter();success=False;reason=None
             self._stage(vid,'resolve')
             try:
-                self._prepare(vid,item,started);success=True
+                speculative.on=True
+                try:self._prepare(vid,item,started);success=True
+                finally:speculative.on=False
             except (AudioUnavailable,OSError,ValueError,http.client.HTTPException,ProviderError,subprocess.SubprocessError) as error:
                 reason=str(error) if isinstance(error,AudioUnavailable) else type(error).__name__
                 reason=re.sub(r'[^A-Za-z0-9_]','',reason)[:60]
