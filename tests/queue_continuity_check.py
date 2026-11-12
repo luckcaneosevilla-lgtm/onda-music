@@ -38,6 +38,7 @@ try:
    ios=case in ('native-pause-no-timers','native-ended-wrong-duration','hidden-next-no-timers','late-ended-after-switch','hidden-failure-no-timers','tapped-failure-stays')
    context=browser.new_context(viewport={'width':390,'height':844},storage_state=state,**({'user_agent':IPHONE} if ios else {}))
    page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+   page.on('requestfailed',lambda r: print('Network failure: '+r.url+' '+str(r.failure),flush=True) if r.resource_type=='script' else None)
    context.route('**/api/audio/prefetch',lambda r:r.fulfill(status=202,json={}))
    def media(route):
     url=route.request.url
@@ -53,7 +54,9 @@ try:
    context.route('**/api/online/charts',lambda r:r.fulfill(json={'country':'Test','songs':[],'artists':[]}))
    context.route('**/api/online/recommendations*',lambda r:r.fulfill(json={'items':[]}))
    if case in ('silent-end-no-event','browser-pause-at-end'):page.clock.install()
-   page.goto(origin);page.wait_for_function('() => me && typeof ensureRadio === "function"')
+   page.goto(origin)
+   assert not errors,errors
+   page.wait_for_function('() => me && typeof ensureRadio === "function"')
    page.evaluate("""() => {
      localStorage.setItem('ivox-crossfade','0');prefetchNext=()=>{};
      window.song=id=>({id:'piped:'+id,provider_id:id,provider:'piped',title:id,channel:'Fixture',duration:id.startsWith('short')?1:60});

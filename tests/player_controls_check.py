@@ -58,6 +58,13 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#online-audio').duration===60 && document.querySelector('#online-audio').seekable.length>0")
     page.wait_for_function("!document.querySelector('#np-range').disabled")
     page.wait_for_timeout(500)
+    assert page.evaluate("""() => {
+      const controls=window.IVoxPlayerControls,buffer=document.querySelector('#np-buffer');
+      controls.update();const segment=buffer.firstChild;if(!segment)return false;
+      for(let i=0;i<100;i++)controls.update();
+      return segment===buffer.firstChild;
+    }"""), 'Unchanged buffered ranges should reuse DOM nodes'
+    checks.append('100 progress updates reuse unchanged buffer nodes')
     range_ = page.locator('#np-range')
     box = range_.bounding_box()
     assert box['height'] >= 44

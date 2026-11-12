@@ -16,7 +16,30 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   const text=document.createElement('span'),button=document.createElement('button');button.textContent='Recargar ahora';button.className='primary';
   notice.append(text,button);document.body.append(notice);
   let updateReady=false;
-  button.onclick=async()=>{if(!updateReady){notice.hidden=true;return}button.disabled=true;button.textContent='Actualizando…';try{const r=await navigator.serviceWorker?.getRegistration();await r?.update()}catch{}location.reload()};
+  function activated(worker){
+    return new Promise((resolve,reject)=>{
+      const done=error=>{clearTimeout(timer);worker.removeEventListener('statechange',check);error?reject(error):resolve()};
+      const check=()=>{if(worker.state==='activated')done();else if(worker.state==='redundant')done(Error('No se pudo instalar la actualización.'))};
+      const timer=setTimeout(()=>done(Error('La actualización sigue pendiente. Vuelve a intentarlo.')),25000);
+      worker.addEventListener('statechange',check);check();
+    });
+  }
+  button.onclick=async()=>{
+    if(!updateReady){notice.hidden=true;return}
+    button.disabled=true;button.textContent='Actualizando…';
+    try{
+      const registration=await navigator.serviceWorker?.getRegistration();
+      await registration?.update();
+      // update() can resolve while cache.addAll is still downloading. Reload
+      // only after the new worker has cached the shell and claimed this page.
+      const worker=registration?.installing||registration?.waiting||registration?.active;
+      if(worker)await activated(worker);
+      location.reload();
+    }catch{
+      text.textContent='No se pudo completar la actualización. Comprueba la conexión y reintenta.';
+      button.disabled=false;button.textContent='Reintentar';
+    }
+  };
   let checking=false;
   async function check(){
     if(document.hidden||checking)return;checking=true;

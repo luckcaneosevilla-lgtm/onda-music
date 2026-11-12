@@ -13,7 +13,7 @@
   // Optional IVoxPlayerControls.duration(): the player may know a better length than the
   // element (Safari can report twice the real one); without it, the element's duration.
   const length = () => { const provider = window.IVoxPlayerControls?.duration; const value = provider ? provider() : audio.duration; return Number.isFinite(value) && value > 0 ? value : audio.duration; };
-  let dragging = false, dragSource = '', dragVersion = 0, version = 0;
+  let dragging = false, dragSource = '', dragVersion = 0, version = 0, bufferedKey = '';
   function paint(time,total) {
     const ratio = total > 0 ? clamp(time/total,0,1) : 0;
     fill.style.width = `${ratio*100}%`;
@@ -21,6 +21,8 @@
     range.setAttribute('aria-valuetext',`${clock(time)} de ${clock(total)}`);
   }
   function update(time=audio.currentTime,total=length()) {
+    // Keep media/queue callbacks synchronous; only skip invisible DOM work.
+    if (document.hidden) return;
     const valid = Number.isFinite(total) && total > 0;
     duration.textContent = clock(total);
     range.disabled = !valid || !audio.seekable.length;
@@ -28,19 +30,25 @@
       paint(valid ? time : 0,valid ? total : 0);
       range.value = valid ? Math.round(clamp(time/total,0,1)*1000) : 0;
     }
-    const fragments = document.createDocumentFragment();
+    const segments = [];
     if (valid) {
       const buffered = audio.buffered;
       for (let i=0;i<buffered.length;i++) {
         const start=clamp(buffered.start(i),0,total), end=clamp(buffered.end(i),0,total);
         if (end <= start) continue;
-        const segment=document.createElement('span');
-        segment.style.left=`${start/total*100}%`;
-        segment.style.width=`${(end-start)/total*100}%`;
-        fragments.append(segment);
+        segments.push([start/total*100,(end-start)/total*100]);
       }
     }
-    buffer.replaceChildren(fragments);
+    const key=JSON.stringify(segments);
+    if(key!==bufferedKey){
+      bufferedKey=key;
+      const fragments=document.createDocumentFragment();
+      for(const [left,width] of segments){
+        const segment=document.createElement('span');
+        segment.style.left=`${left}%`;segment.style.width=`${width}%`;fragments.append(segment);
+      }
+      buffer.replaceChildren(fragments);
+    }
   }
   function cancelSeek() { dragging=false; version++; update(); }
   function beginSeek() {
@@ -80,7 +88,11 @@
     const releasedVersion=version;
     setTimeout(() => {if(dragging && version===releasedVersion) cancelSeek();},0);
   });
-  for(const event of ['loadedmetadata','durationchange','timeupdate','progress','seeked','canplay']) audio.addEventListener(event,() => update());
+  for(const event of ['loadedmetadata','durationchange','timeupdate','progress','seeked','canplay']) audio.addEventListener(event,() => {
+    // online.js owns progress events when the full player is installed.
+    if (!window.IVoxPlayerControls.duration || event==='seeked' || event==='canplay') update();
+  });
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden) update();});
   audio.addEventListener('emptied',cancelSeek);
   window.IVoxPlayerControls={update,cancelSeek,seek,duration:null};
 

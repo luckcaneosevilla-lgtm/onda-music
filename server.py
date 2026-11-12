@@ -147,6 +147,9 @@ def create_admin_recovery(email,port=8765):
     return f'http://127.0.0.1:{port}/recover#{token}'
 
 class OndaHTTPServer(ThreadingHTTPServer):
+    # An installed shell opens many asset connections at once. Python 3.12's
+    # default backlog of five can refuse scripts during these short bursts.
+    request_queue_size=128
     daemon_threads=False
     block_on_close=True
 
@@ -239,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 if filename=='index.html':raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"><meta name="ivox-release" content="{RELEASE_VERSION}"></head>'.encode())
-                if filename=='service-worker.js':raw=raw.replace(b'ivox-app-shell-v26',('ivox-app-shell-'+APP_VERSION).encode())
+                if filename=='service-worker.js':raw=re.sub(rb'ivox-app-shell-v\d+',('ivox-app-shell-'+APP_VERSION).encode(),raw,count=1)
                 self.send_response(200); self.headers_common(static_types[filename])
                 if filename=='service-worker.js': self.send_header('Service-Worker-Allowed','/')
                 self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw); return

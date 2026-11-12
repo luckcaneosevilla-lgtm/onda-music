@@ -4,6 +4,13 @@ const cache={match:async key=>entries.get(key)?.clone(),keys:async()=>[...entrie
 const context={URL,Request,Response,Blob,AbortController,AbortSignal,ReadableStream,Date,Map,Set,Promise,console,caches:{open:async()=>cache},fetch:async()=>{fetches++;return new Response(new Uint8Array(20000).fill(7),{headers:{'Content-Type':'audio/mpeg'}})},self:{location:{origin:'https://ivox.test'},addEventListener(type,listener){listeners[type]=listener},clients:{matchAll:async()=>[]}}};
 vm.createContext(context);vm.runInContext(fs.readFileSync('web/service-worker.js','utf8'),context);
 (async()=>{
+ // A warm app shell must render without a network round-trip, even online.
+ entries.set('/player-controls.js',new Response('cached controls'));
+ let shellResponse;
+ listeners.fetch({request:new Request('https://ivox.test/player-controls.js'),respondWith(value){shellResponse=value}});
+ assert.equal(await (await shellResponse).text(),'cached controls');
+ assert.equal(fetches,0,'Warm shell should not fetch scripts again');
+ entries.delete('/player-controls.js');
  let intercepted=0;
  context.self.navigator={userAgent:'Mozilla/5.0 (iPhone) Version/18 Safari/604.1'};
  listeners.fetch({request:new Request('https://ivox.test/api/audio/abcdefghijk?memory=1'),respondWith(){intercepted++}});

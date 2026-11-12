@@ -46,13 +46,16 @@ try:
      route.fulfill(json={'url':'/api/audio/testVideo01?native=1','source':'proxy-native','level':1});return
     media_requests.append(route.request.url);media(route)
    context.route('**/api/audio/testVideo*',tracked_media)
+   context.route('**/api/online/status',lambda r:r.fulfill(json={'configured':True,'source':'piped','piped':False}))
+   context.route('**/api/online/charts',lambda r:r.fulfill(json={'country':'Test','songs':[],'artists':[]}))
+   context.route('**/api/online/recommendations*',lambda r:r.fulfill(json={'items':[]}))
    context.route('**/fixture-audio',media)
    if mode=='stream-duration-correction':context.route('**/api/online/items/**',lambda r:r.fulfill(json={'duration':60}))
    if mode=='async-source':
     def delayed_source(route):
      time.sleep(.15);route.fulfill(json={'url':'/fixture-audio','source':'audius','level':4})
     context.route('**/api/online/play/**',delayed_source)
-   page.goto(base);page.wait_for_function("() => typeof startOnline === 'function' && me !== null")
+   page.goto(base);page.wait_for_function("() => typeof startOnline === 'function' && !!me && onlineLoaded")
    provider='audius' if mode=='async-source' else 'piped'
    page.evaluate("""provider => {
      ensureRadio=()=>{};prefetchNext=()=>{};
@@ -95,6 +98,19 @@ try:
     assert page.locator('#sheet-buffer>span').count()==2
     assert page.locator('#sheet-buffer>span').nth(1).evaluate('(e)=>e.style.left')=='60%'
     assert page.locator('#sheet-range').bounding_box()['height']>=44
+    assert page.evaluate("""() => {
+      const buffer=document.querySelector('#sheet-buffer'),first=buffer.firstChild;
+      for(let i=0;i<100;i++)nowPlaying.progress(8,10);
+      return first===buffer.firstChild;
+    }"""), 'Full player rebuilt unchanged buffered ranges'
+    # Lyrics must resume when reopening the sheet during the same song.
+    page.evaluate("() => {lyricsFor=audioQueue[audioIndex].id;nowPlaying.open('lyrics')}")
+    page.wait_for_function('() => lyricsFrame !== 0')
+    page.evaluate('() => nowPlaying.close(true)')
+    assert page.evaluate('lyricsFrame === 0')
+    page.wait_for_function('() => sheet.hidden')
+    page.evaluate("() => nowPlaying.open('lyrics')")
+    page.wait_for_function('() => lyricsFrame !== 0')
    if mode in ('recover-network','no-copy-download'):
     page.evaluate('() => {audioQueue[audioIndex].duration=60}')
     page.evaluate('() => {onlineAudio.currentTime=12;lastPlaybackTime=12}')

@@ -5,23 +5,23 @@ const sheet=$('#np-sheet'),sheetCover=$('#sheet-cover'),lyricsBox=$('#lyrics');
 const isIOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
 const clock=n=>Number.isFinite(n)?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`:'0:00';
-let sheetTab='queue',ignorePop=false,lastFocus=null;
+let sheetTab='queue',ignorePop=false,lastFocus=null,sheetBufferedKey='';
 
 const nowPlaying={
   open(tab){
     if(!audioQueue[audioIndex])return;if(tab)selectTab(tab);
-    if(sheet.hidden){lastFocus=document.activeElement;sheet.hidden=false;document.body.classList.add('sheet-open');requestAnimationFrame(()=>sheet.classList.add('open'));
+    if(sheet.hidden){lastFocus=document.activeElement;sheet.hidden=false;document.body.classList.add('sheet-open');requestAnimationFrame(()=>{sheet.classList.add('open');syncLyricsLoop();visualizer.sync()});
       // Android's back button (and the browser's) closes the sheet instead of leaving the page.
       if(!history.state?.sheet)history.pushState({...(history.state||{}),sheet:true},'',location.href);
       $('#sheet-close').focus({preventScroll:true});}
-    this.track(audioQueue[audioIndex]);drawQueue();if(sheetTab==='lyrics')loadLyrics();visualizer.sync();
+    this.track(audioQueue[audioIndex]);drawQueue();this.progress(onlineAudio.currentTime,trackDuration());if(sheetTab==='lyrics')loadLyrics();syncLyricsLoop();visualizer.sync();
   },
   close(silent=false){
     cancelSheetSeek();
     if(sheet.hidden)return;sheet.classList.remove('open');document.body.classList.remove('sheet-open');
     setTimeout(()=>{if(!sheet.classList.contains('open'))sheet.hidden=true},reducedMotion.matches?0:320);
     if(!silent&&history.state?.sheet){ignorePop=true;history.back()}
-    visualizer.sync();lastFocus?.focus?.({preventScroll:true});
+    syncLyricsLoop();visualizer.sync();lastFocus?.focus?.({preventScroll:true});
   },
   isOpen:()=>!sheet.hidden&&sheet.classList.contains('open'),
   state(state){
@@ -40,12 +40,13 @@ const nowPlaying={
     if(lyricsFor!==item.id&&sheetTab==='lyrics'&&!sheet.hidden)loadLyrics();
   },
   progress(time,total,loaded){
-    if(sheet.hidden)return;const valid=Number.isFinite(total)&&total>0,ratio=valid?Math.max(0,Math.min(1,time/total)):0;
+    if(sheet.hidden||document.hidden)return;const valid=Number.isFinite(total)&&total>0,ratio=valid?Math.max(0,Math.min(1,time/total)):0;
     $('#sheet-duration').textContent=clock(total);$('#sheet-range').disabled=!valid||!onlineAudio.seekable.length;
     if(!sheetSeeking){$('#sheet-current').textContent=clock(time);$('#sheet-fill').style.width=ratio*100+'%';$('#sheet-range').value=Math.round(ratio*1000);$('#sheet-range').setAttribute('aria-valuetext',clock(time)+' de '+clock(total))}
-    const fragments=document.createDocumentFragment(),ranges=onlineAudio.buffered;
-    if(valid)for(let i=0;i<ranges.length;i++){const start=Math.max(0,Math.min(total,ranges.start(i))),end=Math.max(0,Math.min(total,ranges.end(i)));if(end<=start)continue;const segment=document.createElement('span');segment.style.left=start/total*100+'%';segment.style.width=(end-start)/total*100+'%';fragments.append(segment)}
-    $('#sheet-buffer').replaceChildren(fragments);
+    const segments=[],ranges=onlineAudio.buffered;
+    if(valid)for(let i=0;i<ranges.length;i++){const start=Math.max(0,Math.min(total,ranges.start(i))),end=Math.max(0,Math.min(total,ranges.end(i)));if(end>start)segments.push([start/total*100,(end-start)/total*100])}
+    const key=JSON.stringify(segments);
+    if(key!==sheetBufferedKey){sheetBufferedKey=key;const fragments=document.createDocumentFragment();for(const [left,width] of segments){const segment=document.createElement('span');segment.style.left=left+'%';segment.style.width=width+'%';fragments.append(segment)}$('#sheet-buffer').replaceChildren(fragments)}
   },
   liked(){
     const item=audioQueue[audioIndex],on=!!(item&&savedVideo(item.id).favorite);
@@ -164,10 +165,16 @@ function syncLyrics(force=false){
 }
 // The user scrolling the lyrics pauses auto-scroll for a few seconds.
 for(const ev of ['wheel','touchmove'])$('#panel-lyrics').addEventListener(ev,()=>{manualScrollUntil=Date.now()+4000},{passive:true});
-function lyricsLoop(){lyricsFrame=0;if(sheet.hidden||$('#panel-lyrics').hidden||onlineAudio.paused)return;syncLyrics();lyricsFrame=requestAnimationFrame(lyricsLoop)}
-onlineAudio.addEventListener('playing',()=>{if(!lyricsFrame)lyricsFrame=requestAnimationFrame(lyricsLoop)});
+function lyricsLoop(){lyricsFrame=0;if(!nowPlaying.isOpen()||document.hidden||$('#panel-lyrics').hidden||onlineAudio.paused)return;syncLyrics();lyricsFrame=requestAnimationFrame(lyricsLoop)}
+function syncLyricsLoop(){
+  if(lyricsFrame)cancelAnimationFrame(lyricsFrame);lyricsFrame=0;
+  if(nowPlaying.isOpen()&&!document.hidden&&sheetTab==='lyrics'){syncLyrics(true);if(!onlineAudio.paused)lyricsFrame=requestAnimationFrame(lyricsLoop)}
+}
+onlineAudio.addEventListener('playing',syncLyricsLoop);
+onlineAudio.addEventListener('pause',syncLyricsLoop);
 onlineAudio.addEventListener('seeked',()=>syncLyrics(true));
-$('#tab-lyrics').addEventListener('click',()=>{if(!lyricsFrame)lyricsFrame=requestAnimationFrame(lyricsLoop)});
+for(const tab of ['queue','lyrics'])$('#tab-'+tab).addEventListener('click',syncLyricsLoop);
+document.addEventListener('visibilitychange',()=>{syncLyricsLoop();visualizer.sync();if(!document.hidden)nowPlaying.progress(onlineAudio.currentTime,trackDuration())});
 
 // ---- Gestures ----------------------------------------------------------------
 // Sheet cover: swipe left/right changes song, swipe down closes, double tap likes.
@@ -243,11 +250,12 @@ const visualizer={
     this.ctx.resume().catch(()=>{});this.on=!this.on;$('#sheet-viz').setAttribute('aria-pressed',String(this.on));this.sync();
   },
   sync(){
-    const active=this.on&&!sheet.hidden&&sheet.dataset.state==='playing';this.canvas.hidden=!this.on;sheet.classList.toggle('viz-on',this.on);
+    const active=this.on&&nowPlaying.isOpen()&&!document.hidden&&sheet.dataset.state==='playing';this.canvas.hidden=!this.on;sheet.classList.toggle('viz-on',this.on);
+    if(!active&&this.frame){cancelAnimationFrame(this.frame);this.frame=0}
     if(active&&!this.frame)this.frame=requestAnimationFrame(()=>this.draw());
   },
   draw(){
-    this.frame=0;if(!this.on||sheet.hidden||sheet.dataset.state!=='playing')return;
+    this.frame=0;if(!this.on||!nowPlaying.isOpen()||document.hidden||sheet.dataset.state!=='playing')return;
     const c=this.canvas,dpr=Math.min(2,devicePixelRatio||1),size=c.clientWidth;
     if(c.width!==Math.round(size*dpr)){c.width=c.height=Math.round(size*dpr)}
     const x=c.getContext('2d');x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,size,size);

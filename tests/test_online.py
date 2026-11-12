@@ -34,6 +34,12 @@ class OnlineTests(unittest.TestCase):
         with patch.object(onda.provider,'request',return_value=PIPED) as request:
             result=self.client.request('/api/online/search?q=Feid&source=piped');count=request.call_count
         return result,count
+    def test_worker_cache_matches_deployed_release(self):
+        status,version=self.client.request('/version.json')
+        self.assertEqual(status,200)
+        status,worker=self.client.request('/service-worker.js')
+        self.assertEqual(status,200)
+        self.assertIn(("const CACHE = 'ivox-app-shell-"+version['version']+"'").encode(),worker)
     def test_piped_search_cache_and_signed_pagination(self):
         (status,r),count=self.search();self.assertEqual(status,200,r);self.assertEqual(count,1);self.assertEqual(r['items'][0]['duration'],201);self.assertEqual(r['items'][0]['id'],VID)
         (_,cached),count=self.search();self.assertTrue(cached['cached']);self.assertEqual(count,0)

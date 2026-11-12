@@ -1,4 +1,4 @@
-const CACHE = 'ivox-app-shell-v33';
+const CACHE = 'ivox-app-shell-v34';
 const SHELL = ['/', '/index.html', '/style.css', '/online.css', '/player.css', '/sheet.css',
   '/app.js', '/player-controls.js', '/online.js', '/sheet.js', '/home.js', '/offline.js', '/crossfade.js', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav',
   '/fonts/cinzel.woff2', '/fonts/inter.woff2', '/release.css', '/release.js', '/boot.css', '/boot.js'];
@@ -115,6 +115,10 @@ self.addEventListener('fetch', event => {
   if (!ASSETS.has(url.pathname) || url.search) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
+    // The install step populates this versioned shell atomically. Reuse it
+    // immediately instead of waiting for the network for every script/font.
+    const hit = await cache.match(url.pathname);
+    if (hit) return hit;
     try {
       const response = await fetch(request);
       if (response.ok && response.type === 'basic') await cache.put(url.pathname, response.clone());
