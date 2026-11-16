@@ -160,6 +160,7 @@ class PartialMP4:
 class PartialResponse:
     def __init__(self,representation,start,end,partial):
         self.view=representation;self.offset=start;self.end=end;self.connection=None;self.response=None;self.closed=False;self.source_end=-1
+        self.reconnects=0
         self.status=206 if partial else 200
         self.headers={'content-type':'audio/mp4','accept-ranges':'bytes','content-length':str(end-start+1)}
         if partial:self.headers['content-range']=f'bytes {start}-{end}/{representation.total}'
@@ -173,13 +174,24 @@ class PartialResponse:
         kind,origin,segment_end=self.view.locate(self.offset);limit=min(self.end+1,segment_end)
         if kind=='metadata':
             data=self.view.moov[origin:origin+min(size,limit-self.offset)];self.offset+=len(data);return data
-        if self.response is None or self.offset>self.source_end:
-            if self.connection:self.connection.close()
-            try:self.connection,self.response,_=self.view.source.open(origin,origin+limit-self.offset-1)
-            except (AudioUnavailable,ProviderError,ValueError):raise OSError('partial_continuation_failed') from None
-            self.source_end=limit-1
-        data=self.response.read1(min(size,limit-self.offset))
-        if not data:raise http.client.IncompleteRead(b'')
+        while True:
+            try:
+                if self.response is None or self.offset>self.source_end:
+                    if self.connection:self.connection.close()
+                    try:self.connection,self.response,_=self.view.source.open(origin,origin+limit-self.offset-1)
+                    except (AudioUnavailable,ProviderError,ValueError):raise OSError('partial_continuation_failed') from None
+                    self.source_end=limit-1
+                data=self.response.read1(min(size,limit-self.offset))
+                if not data:raise http.client.IncompleteRead(b'')
+                break
+            except (OSError,http.client.HTTPException) as error:
+                if self.connection:self.connection.close()
+                self.connection=None;self.response=None
+                # Resume only the same signed representation at the first byte
+                # not delivered. RangeSource rechecks length and validators.
+                # A changed/forbidden representation must fail immediately.
+                if str(error)=='partial_continuation_failed' or self.reconnects>=2:raise
+                self.reconnects+=1
         self.offset+=len(data);return data
     read=read1
     def close(self):

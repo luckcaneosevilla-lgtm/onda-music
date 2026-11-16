@@ -28,7 +28,7 @@ def is_speculative():return getattr(speculative,'on',False)
 
 class AudioUnavailable(Exception):pass
 
-_cookie_warned=[0.0]
+_cookie_warned=[float('-inf')]
 def cookie_warning(reason):
     """Expired/rejected account cookies: say so in the logs, at most every 10 minutes."""
     if time.monotonic()-_cookie_warned[0]<600:return
@@ -134,7 +134,9 @@ def reason(error):
         if needle in text:return code
     return 'extract_failed'
 profiles=[('yt-dlp-direct',['visionos']),('yt-dlp-compatible',None),('yt-dlp-alt',['tv','web_safari','mweb','visionos'])]
-if pot:profiles.insert(0,('yt-dlp-pot',['mweb','android_vr']))
+# Token minting can take seconds on a small provider: the fast usual client goes
+# first and the PO-token clients follow, for when YouTube refuses it (bot_check).
+if pot:profiles.insert(1,('yt-dlp-pot',['mweb','android_vr']))
 if mode=='standard':profiles=profiles[1:]
 elif mode=='compatible':profiles=profiles[2:]+profiles[1:2]
 if re.fullmatch(r'[A-Za-z0-9_-]{11}',video_id):
@@ -169,7 +171,7 @@ class YtDlpResolver:
     def __init__(self,size=1,recycle=None):
         # Retain constructor compatibility, but never create a process pool.
         self.cache={};self.failures={};self.failure_reasons={};self.refreshes={};self.guard=threading.Lock();self.store=None
-        self.locks={};self.timeout=max(1,min(12,float(os.environ.get('IVOX_EXTRACT_TIMEOUT','9'))));self.slot=threading.BoundedSemaphore(1)
+        self.locks={};self.timeout=max(1,min(12,float(os.environ.get('IVOX_EXTRACT_TIMEOUT','12'))));self.slot=threading.BoundedSemaphore(1)
         self.engines={};self.standard={};self.compatible={}
         self.prefixes=PrefixCache(limit=2*1024*1024,fragment=65536)
         self.shared=None;self.cache_ttl=1800

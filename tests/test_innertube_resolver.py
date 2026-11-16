@@ -113,4 +113,17 @@ class InnerTubeTests(unittest.TestCase):
             self.assertEqual(resolver.visitor_data(VID,rejected='expired'),'fresh')
             request.assert_called_once()
 
+    def test_explicit_refresh_retries_fast_route_after_a_transient_failure(self):
+        resolver=InnerTubeResolver()
+        resolver.invalidate(VID)
+        self.assertIsNone(resolver.resolve(VID))
+        self.assertTrue(resolver.refresh(VID))
+        resolver.visitor='valid';resolver.visitor_expires=time.monotonic()+1800
+        with patch.object(resolver,'request',return_value=(200,json.dumps(payload()).encode())) as request:
+            recovered=resolver.resolve(VID)
+            self.assertEqual(recovered['url'],URL)
+            self.assertFalse(resolver.refresh(VID))
+            self.assertIs(resolver.resolve(VID),recovered)
+        request.assert_called_once()
+
 if __name__=='__main__':unittest.main()

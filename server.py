@@ -23,7 +23,7 @@ from audio_router import audio_router
 from audio_prepared import PreparedAudioCache
 prepared_audio=PreparedAudioCache(lambda video_id,metadata:audio_router.resolve(video_id,metadata),partial=True,max_bytes=32*1024*1024,job_timeout=8,prefix_bytes=64*1024)
 from audio_playback import NativePlayback
-native_playback=NativePlayback(prepared_audio,refresh=lambda vid:(audio_router.inner.invalidate(vid),resolver.refresh(vid)))
+native_playback=NativePlayback(prepared_audio,refresh=lambda vid:(audio_router.inner.refresh(vid),resolver.refresh(vid)))
 from streaming import metric, requires_audio_proxy, audio_route
 import turso
 
@@ -345,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
                 attempt=query.get('playback',[''])[0]
                 require(not attempt or re.fullmatch(r'[A-Za-z0-9_-]{16,64}',attempt),'Intento inválido.')
                 if query.get('refresh')==['1'] and not attempt:
-                    prepared_audio.invalidate(video_id);audio_router.inner.invalidate(video_id);resolver.refresh(video_id)
+                    prepared_audio.invalidate(video_id);audio_router.inner.refresh(video_id);resolver.refresh(video_id)
                 if parse_qs(urlparse(self.path).query).get('resolve')==['1']:
                     ua=self.headers.get('User-Agent','')
                     item=None if requires_audio_proxy(ua) else audio_router.resolve(video_id,provider.metadata(c,['piped:'+video_id]).get('piped:'+video_id))

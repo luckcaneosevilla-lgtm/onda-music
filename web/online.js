@@ -12,7 +12,7 @@ function tracePlayback(stage,extra={}){
   const record={stage,version:t.version,elapsed_ms:Math.round(performance.now()-t.start),readyState:onlineAudio.readyState,buffer_seconds:+ahead.toFixed(3),metadata_to_playing_ms:stage==='playing'&&t.times.loadedmetadata!==undefined?Math.round(t.times.playing-t.times.loadedmetadata):undefined,...extra};
   console.info('[Ivox-Astra playback]',record);window.dispatchEvent(new CustomEvent('ivox-playback',{detail:record}));
 }
-for(const event of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','error'])onlineAudio.addEventListener(event,()=>tracePlayback(event));
+for(const event of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','error'])onlineAudio.addEventListener(event,()=>tracePlayback(event,{network_state:onlineAudio.networkState,...(event==='error'?{media_error_code:onlineAudio.error?.code||0}:{})}));
 onlineAudio.addEventListener('timeupdate',()=>{if(onlineAudio.currentTime>0&&!onlineAudio.paused)tracePlayback('first_progress')});
 try{new PerformanceObserver(list=>{for(const e of list.getEntries()){
   const t=playbackTrace;if(!t||e.name!==t.url||e.startTime<t.start)continue;
@@ -577,7 +577,15 @@ function recoverCurrent(){
   recoveryInFlight=true;recoveryAttempts++;clearStall();clearTimeout(watchdog);resolutionBusy=false;
   resumeAt=onlineAudio.currentTime>0?onlineAudio.currentTime:lastPlaybackTime;
   const version=playVersion;playerState('loading');$('#playback-status').textContent='Reconectando la misma canción…';
-  onlineAudio.load();
+  // Reloading an expired native attempt keeps its failed pinned URL. Renew
+  // once per song, preserving both the seek position and the recovery budget.
+  const item=audioQueue[audioIndex];
+  if(proxyOnlyAudio&&activeLevel===1&&item.provider==='piped'&&!freshRetried.has(item.id)){
+    freshRetried.add(item.id);
+    const attempt=crypto.randomUUID().replaceAll('-','');
+    onlineAudio.src='/api/audio/'+item.provider_id+'?native=1&playback='+attempt+'&refresh=1';
+    if(playbackTrace)playbackTrace.url=new URL(onlineAudio.src,location.href).href;
+  }else onlineAudio.load();
   onlineAudio.play().catch(e=>{if(version!==playVersion||!playbackWanted||e.name==='AbortError')return;if(e.name==='NotAllowedError'){pausePlayback();playerState('paused');$('#playback-status').textContent='Pulsa ▶ para continuar.'}else retryAudioLevel(version)});
   armWatchdog(version,8000);return true;
 }

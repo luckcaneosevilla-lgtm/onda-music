@@ -57,6 +57,36 @@ class PartialTests(unittest.TestCase):
     def test_ignored_range_is_not_cached(self):
         self.status=200
         with self.assertRaisesRegex(AudioUnavailable,'partial_range_mismatch'):PartialMP4(ITEM)
+    def test_interrupted_continuation_resumes_without_skipping_or_repeating_bytes(self):
+        view=PartialMP4(ITEM)
+        expected=self.consume(PartialResponse(view,0,view.total-1,False))
+        response=PartialResponse(view,len(view.prefix),view.total-1,True)
+        first=response.read1(37)
+        offset=response.offset
+        response.response=Mock()
+        response.response.read1.side_effect=ConnectionResetError('connection reset')
+        rest=self.consume(response)
+        self.assertEqual(first+rest,expected[len(view.prefix):])
+        self.assertEqual(response.reconnects,1)
+        self.assertEqual(self.calls[-1][0],view.locate(offset)[1])
+    def test_repeated_network_failure_is_bounded(self):
+        view=PartialMP4(ITEM)
+        broken=Mock();broken.read1.side_effect=TimeoutError('network timeout')
+        response=PartialResponse(view,len(view.prefix),view.total-1,True)
+        with patch.object(view.source,'open',return_value=(Mock(),broken,None)) as opened:
+            with self.assertRaises(TimeoutError):response.read1()
+        self.assertEqual(opened.call_count,3)
+        self.assertEqual(response.offset,len(view.prefix))
+        response.close()
+    def test_reconnection_still_rejects_changed_representation(self):
+        view=PartialMP4(ITEM)
+        response=PartialResponse(view,len(view.prefix),view.total-1,True)
+        response.read1(37)
+        response.response=Mock()
+        response.response.read1.side_effect=ConnectionResetError()
+        self.etag='changed'
+        with self.assertRaisesRegex(OSError,'partial_continuation_failed'):response.read1()
+        response.close()
     def test_co64_offsets_and_overflow(self):
         original=moov(100,True);changed=relocate_moov(original,16,1000,2000)
         self.assertEqual(struct.unpack_from('>Q',changed,changed.index(b'co64')+12)[0],100+len(original))

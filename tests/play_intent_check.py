@@ -36,6 +36,7 @@ try:
   auth.request.post(base+'/api/register',data={'name':'Playback tests','email':'playback@example.test','password':'isolated-playback-tests'})
   state=auth.storage_state();auth.close()
   for mode in ['first-tap','repeat-loading','sheet-first-tap','sheet-repeat-loading','sheet-seek','unlock-in-flight','async-source','legacy-cache','safari-duration','stream-duration-correction','recover-network','stall-reconnect','pause-stall','switch-stall','no-copy-download']:
+   if len(sys.argv)>1 and mode not in sys.argv[1:]:continue
    print('Checking '+mode,flush=True)
    options={'viewport':{'width':390,'height':844},'is_mobile':True,'has_touch':True,'storage_state':state}
    if mode=='safari-duration':options['user_agent']='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1'
@@ -127,11 +128,11 @@ try:
      assert len(media_requests)==before,'A second full download competes with playback'
    if mode in ('stall-reconnect','pause-stall','switch-stall'):
     # This case stalls at 12 s in the 60 s fixture, not past a 10 s song's end.
-    page.evaluate('() => {audioQueue[audioIndex].duration=60}')
+    page.evaluate('() => {audioQueue[audioIndex].duration=60;onlineAudio.currentTime=12}')
+    page.wait_for_function('() => onlineAudio.currentTime>=12 && !onlineAudio.seeking')
     page.clock.install()
     page.evaluate("""() => {
       lastPlaybackTime=12;
-      Object.defineProperty(onlineAudio,'currentTime',{configurable:true,value:12});
       Object.defineProperty(onlineAudio,'readyState',{configurable:true,value:1});
       onlineAudio.dispatchEvent(new Event('waiting'));
     }""")
@@ -148,10 +149,16 @@ try:
      page.clock.fast_forward(4000)
      assert page.evaluate("audioQueue[audioIndex].provider_id==='testVideo02' && recoveryAttempts===0")
     else:
+     original_source=page.evaluate('onlineAudio.getAttribute("src")')
      page.clock.fast_forward(3100)
      assert page.evaluate('recoveryAttempts===1 && audioIndex===0')
+     renewed=page.evaluate('onlineAudio.getAttribute("src")')
+     assert renewed!=original_source and 'refresh=1' in renewed and 'native=1' in renewed,renewed
      page.evaluate('() => {delete onlineAudio.currentTime;delete onlineAudio.readyState}')
-     page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>=12 && onlineAudio.readyState>=2',timeout=6000)
+     try:page.wait_for_function('() => !onlineAudio.paused && onlineAudio.currentTime>=12 && onlineAudio.readyState>=2',timeout=6000)
+     except Exception:
+      print(page.evaluate('({time:onlineAudio.currentTime,paused:onlineAudio.paused,ready:onlineAudio.readyState,error:onlineAudio.error?.code,wanted:playbackWanted,resume:resumeAt,state:document.querySelector("#online-player").dataset.state,attempts:recoveryAttempts})'),flush=True)
+      raise
     page.evaluate('() => {delete onlineAudio.currentTime;delete onlineAudio.readyState}')
    if mode=='pause-stall':
     # Already paused deliberately; do not toggle it back on.

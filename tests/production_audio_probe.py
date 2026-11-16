@@ -29,10 +29,22 @@ def api(path,data=None):
 def probe(item):
     started=time.monotonic()
     result={'id':item['id'],'title':item['title']}
-    req=urllib.request.Request(origin+'/api/audio/'+item['provider_id'],headers={'Range':'bytes=0-32767'})
+    path=origin+'/api/audio/'+item['provider_id']
+    if '--native-ranges' in sys.argv:path+='?native=1&playback='+secrets.token_hex(16)
+    req=urllib.request.Request(path,headers={'Range':'bytes=0-32767'})
     try:
         with client.open(req,timeout=45) as response:
             result.update(status=response.status,mime=response.headers.get('Content-Type'),server_timing=response.headers.get('Server-Timing'),cache=response.headers.get('X-IVOX-Audio-Cache'),bytes=len(response.read(32768)))
+            bounds=response.headers.get('Content-Range','')
+        if '--native-ranges' in sys.argv:
+            total=int(bounds.rsplit('/',1)[1]);checks=[]
+            for start,end in [(0,1),(total//2,min(total-1,total//2+32767)),(max(0,total-32768),total-1)]:
+                with client.open(urllib.request.Request(path,headers={'Range':f'bytes={start}-{end}'}),timeout=45) as response:
+                    body=response.read(end-start+2)
+                    valid=response.status==206 and response.headers.get('Content-Range')==f'bytes {start}-{end}/{total}' and len(body)==end-start+1
+                    checks.append({'start':start,'end':end,'valid':valid})
+                    if not valid:raise ValueError('native_range_mismatch')
+            result['native_ranges']=checks
     except urllib.error.HTTPError as error:
         result.update(status=error.code,error=error.read(2048).decode(errors='replace'))
     except Exception as error:result.update(error=type(error).__name__)
@@ -43,15 +55,26 @@ def probe(item):
 def browser_probe(tracks):
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        browser=p.chromium.launch(env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'})
+        engine=p.webkit if '--webkit' in sys.argv else p.chromium
+        browser=engine.launch(env={k:v for k,v in os.environ.items() if k!='SSLKEYLOGFILE'})
         options={'viewport':{'width':390,'height':844}}
-        if '--iphone-path' in sys.argv:options.update(user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',has_touch=True,is_mobile=True)
+        if '--iphone-path' in sys.argv or '--webkit' in sys.argv:options.update(user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',has_touch=True,is_mobile=True)
         context=browser.new_context(**options)
+        capability=context.new_page()
+        aac=capability.evaluate('() => document.createElement("audio").canPlayType(\'audio/mp4; codecs="mp4a.40.2"\')')
+        capability.close()
+        if not aac:
+            browser.close()
+            raise RuntimeError('This browser build cannot decode AAC-LC; it cannot validate iPhone playback.')
         context.add_cookies([{'name':c.name,'value':c.value,'domain':c.domain,'path':c.path,
                              'secure':c.secure,'httpOnly':True,'sameSite':'Strict'} for c in jar])
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(origin)
         page.wait_for_function('() => me && typeof playList === "function"')
+        # First-login release notes are a modal dialog and block real taps.
+        page.wait_for_function('() => document.querySelector(".account .release-trigger")')
+        release=page.locator('dialog[open] .release-start')
+        if release.count():release.click()
         page.evaluate("items => {setAutoplay(false);audioQueue=items;audioIndex=0;document.querySelector('#online-player').hidden=false}",tracks[:2])
         page.evaluate("""() => {
           window.tapAt=0;window.nextAt=0;window.startMs=null;window.nextMs=null;
@@ -71,7 +94,7 @@ def browser_probe(tracks):
             print(json.dumps({'browser_failure':detail},ensure_ascii=True),flush=True)
             browser.close();raise
         first=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,playing_ms:startMs,state:document.querySelector("#online-player").dataset.state})')
-        if '--iphone-path' in sys.argv:
+        if '--iphone-path' in sys.argv or '--webkit' in sys.argv:
             page.evaluate("() => {Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))}")
         # Seek to the real ending so the deployed media element must emit ended
         # and advance itself, without clicking Next or synthesizing that event.
@@ -79,7 +102,7 @@ def browser_probe(tracks):
         page.wait_for_function('() => audioIndex===1 && !onlineAudio.paused && onlineAudio.currentTime>8 && onlineAudio.readyState>=2',timeout=45000)
         second=page.evaluate('({id:audioQueue[audioIndex].id,time:onlineAudio.currentTime,transition_ms:nextMs,state:document.querySelector("#online-player").dataset.state})')
         page.evaluate('stopOnline()');browser.close()
-    result={'first':first,'automatic_next':second,'page_errors':errors}
+    result={'engine':'webkit' if '--webkit' in sys.argv else 'chromium','first':first,'automatic_next':second,'page_errors':errors}
     assert not errors,errors
     return result
 

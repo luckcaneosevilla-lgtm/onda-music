@@ -55,7 +55,8 @@ class LayerTests(unittest.TestCase):
 
     def test_worker_tries_po_token_clients_first_only_when_provider_is_up(self):
         a=fresh()
-        self.assertIn("if pot:profiles.insert(0,('yt-dlp-pot',['mweb','android_vr']))",a.WORKER)
+        # After the fast usual client, never before it (slow minting timed songs out).
+        self.assertIn("if pot:profiles.insert(1,('yt-dlp-pot',['mweb','android_vr']))",a.WORKER)
         self.assertIn("pot=options.pop('ivox_pot',False)",a.WORKER)
 
     def test_pasted_secret_cookies_become_private_netscape_file(self):

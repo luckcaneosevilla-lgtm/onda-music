@@ -33,6 +33,7 @@ class InnerTubeResolver:
         self.connections=queue.LifoQueue(maxsize=4);self.visitor_lock=threading.Lock()
         self.visitor=None;self.visitor_expires=0;self.visitor_retry=0
         self.preferred=preferred if preferred in {p[0]['clientName'] for p in PROFILES} else 'VISIONOS'
+        self.refreshes={}
         self.context=secure_context()
 
     def request(self,method,path,body=None,headers=None):
@@ -172,6 +173,17 @@ class InnerTubeResolver:
     def invalidate(self,video_id):
         with self.lock:
             self.cache.pop(video_id,None);self.failures[video_id]=time.monotonic()+30
+
+    def refresh(self,video_id):
+        """Explicit recovery may retry the fast route; coalesce parallel listeners."""
+        with self.lock:
+            stamp=time.monotonic()
+            self.refreshes={k:v for k,v in self.refreshes.items() if v>stamp}
+            if self.refreshes.get(video_id,0)>stamp:return False
+            if len(self.refreshes)>=500:self.refreshes.pop(next(iter(self.refreshes)))
+            self.refreshes[video_id]=stamp+30
+            self.cache.pop(video_id,None);self.failures.pop(video_id,None)
+        return True
 
     def open(self,video_id,range_header=None):
         started=time.perf_counter();item=self.resolve(video_id)
