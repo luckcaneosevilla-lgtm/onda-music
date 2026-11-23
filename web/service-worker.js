@@ -3,6 +3,8 @@ const SHELL = ['/', '/index.html', '/style.css', '/online.css', '/player.css', '
   '/app.js', '/player-controls.js', '/online.js', '/sheet.js', '/home.js', '/offline.js', '/crossfade.js', '/astra.js', '/astra.css', '/pwa.js', '/manifest.json', '/icon-192x192.png', '/icon-512x512.png', '/silence.wav',
   '/fonts/cinzel.woff2', '/fonts/inter.woff2', '/release.css', '/release.js', '/boot.css', '/boot.js'];
 const ASSETS = new Set(SHELL);
+// The server writes the release into CACHE; pages ask for /file.js?v=<release>.
+const VERSION = CACHE.slice('ivox-app-shell-'.length);
 const PAGES = new Set(['/', '/index.html', '/library', '/plan', '/files', '/privacy', '/astra']);
 
 self.addEventListener('install', event => {
@@ -112,7 +114,11 @@ self.addEventListener('fetch', event => {
     event.respondWith(fetch(request).catch(async () => (await caches.match('/')) || Response.error()));
     return;
   }
-  if (!ASSETS.has(url.pathname) || url.search) return;
+  const release = url.searchParams.get('v');
+  if (!ASSETS.has(url.pathname) || (url.search && (!release || [...url.searchParams.keys()].length > 1))) return;
+  // A page from another release must get that release's files from the network,
+  // never this worker's older (or newer) copy.
+  if (release && release !== VERSION) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     // The install step populates this versioned shell atomically. Reuse it

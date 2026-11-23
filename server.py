@@ -285,7 +285,11 @@ class Handler(BaseHTTPRequestHandler):
                 static_types={'boot.css':'text/css','boot.js':'text/javascript','release.js':'text/javascript','release.css':'text/css','player-controls.js':'text/javascript','app.js':'text/javascript','online.js':'text/javascript','sheet.js':'text/javascript','home.js':'text/javascript','offline.js':'text/javascript','crossfade.js':'text/javascript','astra.js':'text/javascript','astra.css':'text/css','sheet.css':'text/css','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
-                if filename=='index.html':raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"><meta name="ivox-release" content="{RELEASE_VERSION}"></head>'.encode())
+                if filename=='index.html':
+                    raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"><meta name="ivox-release" content="{RELEASE_VERSION}"></head>'.encode())
+                    # Each page asks for the scripts of its own release. Without this an
+                    # installed app got a fresh page (so no update notice) running old code.
+                    raw=re.sub(rb'(src|href)="/([\w-]+\.(?:js|css))"',lambda m:m[1]+b'="/'+m[2]+b'?v='+APP_VERSION.encode()+b'"',raw)
                 if filename=='service-worker.js':raw=re.sub(rb'ivox-app-shell-v\d+',('ivox-app-shell-'+APP_VERSION).encode(),raw,count=1)
                 self.send_response(200); self.headers_common(static_types[filename])
                 if filename=='service-worker.js': self.send_header('Service-Worker-Allowed','/')
