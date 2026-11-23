@@ -164,6 +164,9 @@ try:
     # Already paused deliberately; do not toggle it back on.
     pass
    else:
+    # play() unpauses before recovery has actually resumed. Wait until the
+    # player is ready to pause; a loading tap intentionally keeps loading.
+    page.wait_for_function("() => document.querySelector('#online-player').dataset.state==='playing' && !recoveryInFlight")
     page.locator(control).click()
     assert page.evaluate('onlineAudio.paused')
    report.append({'case':mode,'playing_ms':round(result['ms'],2),'status':'passed'})

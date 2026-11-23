@@ -19,7 +19,10 @@ try{new PerformanceObserver(list=>{for(const e of list.getEntries()){
   const timing=Object.fromEntries((e.serverTiming||[]).map(value=>[value.name,value.duration]));
   tracePlayback('network',{request_after_play_ms:Math.round(e.requestStart-t.start),response_after_play_ms:Math.round(e.responseStart-t.start),ttfb_ms:Math.round(e.responseStart-e.requestStart),response_end_ms:Math.round(e.responseEnd-t.start),body_download_ms:Math.round(e.responseEnd-e.responseStart),worker_start_ms:e.workerStart?Math.round(e.workerStart-t.start):0,encoded_bytes:e.encodedBodySize,transfer_bytes:e.transferSize,prepared_cache_hit:'prepared_cache_ms' in timing?1:0,audio_path:'partial_cache_ms' in timing?'prepared-partial':'prepared_cache_ms' in timing?'prepared-full':Object.keys(timing).length?'proxy-fallback':'unreported',partial_prepare_ms:timing.partial_prepare_ms,partial_metadata_ms:timing.partial_metadata_ms,partial_fetch_ms:timing.partial_fetch_ms,server_timing:e.serverTiming?.map(v=>({name:v.name,duration:v.duration}))});
 }}).observe({type:'resource',buffered:true})}catch{}
-function prepareAudioSession(){try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch{}}
+// Set once. Re-assigning the type on every song or lock reconfigures the iOS audio
+// session mid-playback, a known trigger of a clock that advances with no sound.
+function prepareAudioSession(){try{if(navigator.audioSession&&navigator.audioSession.type!=='playback')navigator.audioSession.type='playback'}catch{}}
+const appleMobile=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 prepareAudioSession();
 let onlineData={saves:[],playlists:[],items:{},recent:[]},onlineStatus;
 let searchView={query:'',source:'auto',resolved:'piped',items:[],next:null,error:null,loading:false,notice:''};
@@ -448,13 +451,13 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
     tracePlayback('source_assigned',{engine:result.source});onlineAudio.src=result.url;resolutionBusy=false;if(directPlayback)armWatchdog(version,4000);
     if(!autostart){clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Preparado. Pulsa ▶ para escuchar.';return}
     tracePlayback('play_called');
-    try{await onlineAudio.play()}catch(e){if(version!==playVersion||e.name==='AbortError')return;if(e.name==='NotAllowedError'){playbackWanted=false;clearTimeout(watchdog);playerState('paused');$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel(version)}
+    try{await onlineAudio.play()}catch(e){if(version!==playVersion||e.name==='AbortError')return;if(e.name==='NotAllowedError'){clearTimeout(watchdog);playerState('paused');if(document.hidden){$('#playback-status').textContent='Pulsa ▶ para continuar.';return}playbackWanted=false;$('#playback-status').textContent='Pulsa ▶ para empezar.'}else retryAudioLevel(version)}
   }catch(e){if(version!==playVersion||e.name==='AbortError'||!me)return;resolutionBusy=false;retryAudioLevel(version)}
 }
 // Fallback chain for one song: device copy → yt-dlp → Piped (only when an instance runs) → same song on Audius → next song.
 async function retryAudioLevel(version=playVersion){
   if(version!==playVersion||resolutionBusy||!playbackWanted)return;const item=audioQueue[audioIndex];if(!item)return;
-  if(activeLevel===0&&item.provider!=='local'&&cachedIds.has(item.id)){forgetAudio(item);return startOnline(true,1)}
+  if(activeLevel===0&&item.provider!=='local'&&cachedIds.has(item.id)){const at=onlineAudio.currentTime||lastPlaybackTime;forgetAudio(item);return startOnline(true,1,at)}
   // YouTube can cut or refuse one stream: the server then resolves a fresh one (other
   // clients), so a song gets one more try from the same point before it counts as failed.
   if(item.provider==='piped'&&activeLevel===1&&!freshRetried.has(item.id)){freshRetried.add(item.id);$('#playback-status').textContent='Reconectando con YouTube…';return startOnline(true,1,lastPlaybackTime>.25?lastPlaybackTime:0)}
@@ -482,7 +485,7 @@ async function playbackFailure(message){
   onlineAudio.pause();onlineAudio.removeAttribute('src');onlineAudio.load();playerState('error');
   $('#external-playback').innerHTML=externalLink(current)+(current.provider==='piped'?'<button id="playback-audius">Buscar alternativas en Audius</button>':'');
   if($('#playback-audius'))$('#playback-audius').onclick=()=>perform(async()=>{const q=(current.channel+' '+current.title).slice(0,120);history.pushState({},'','/');await discover();$('#online-query').value=q;$('#search-source').value='audius';await runSearch(q,false,'audius')});
-  // A song the listener just tapped never gets silently replaced by the next one.
+  // Keep a chosen song or one already playing selected after a failed recovery.
   if(current.id===pickedId&&recordedReference!==current.id){queueFinished=true;failStreak=0;$('#playback-status').textContent=message+' Pulsa ▶ para reintentarlo o elige otra canción.';notify(message);return}
   if(failStreak>=3){queueFinished=true;$('#playback-status').textContent=message+' Se detuvo tras varios fallos seguidos. Prueba otra canción.';notify(message+' La reproducción se ha detenido tras varios fallos.');return}
   if(audioIndex>=audioQueue.length-1)await ensureRadio(true);
@@ -594,6 +597,12 @@ onlineAudio.onplaying=()=>{const current=audioQueue[audioIndex];if(!current||onl
 // The last seconds of a song. Safari can stop there without 'ended' (a failed last range
 // request of the stream, or a catalogue length a little longer than the audio): that is the end.
 const nearTrackEnd=(margin=3)=>{const total=trackDuration();return total>0&&lastPlaybackTime>.25&&total-onlineAudio.currentTime<margin};
+// A truncated response (including an old device copy) can emit a real native
+// 'ended' after only a few seconds. Catalogue length distinguishes that from
+// a complete song; the native event alone must never advance the queue.
+// When the media itself has reached its end, a catalogue length up to 2x longer is
+// a metadata mismatch, not missing audio: the queue must keep moving (locked phone).
+const prematureTrackEnd=()=>{const known=audioQueue[audioIndex]?.duration,raw=onlineAudio.duration,t=onlineAudio.currentTime;if(!(known>0&&known-t>Math.max(3,known*.1)))return false;return !(Number.isFinite(raw)&&raw-t<=3&&known-t<=known*.5)};
 let endedVersion=-1,endedIntent=-1;
 // Do not leave a ready next song behind a suspended radio promise/timer.
 function resumePendingEnd(){
@@ -612,6 +621,13 @@ onlineAudio.onended=async event=>{
   // ended event. That stale event must not finish the new song at second zero.
   if(event?.type==='ended'&&!onlineAudio.ended&&onlineAudio.currentTime<.25)return;
   if(fixingDuration||onlineAudio.getAttribute('src')==='/silence.wav')return;
+  if(!playbackWanted||resolutionBusy||recoveryInFlight)return;
+  if(prematureTrackEnd()){
+    tracePlayback('error',{reason:'premature_end',position:onlineAudio.currentTime,expected_duration:audioQueue[audioIndex]?.duration});
+    if(activeLevel===0&&cachedIds.has(audioQueue[audioIndex]?.id)){retryAudioLevel(playVersion);return}
+    if(!recoverCurrent())retryAudioLevel(playVersion);
+    return;
+  }
   if(endedVersion===playVersion){resumePendingEnd();return}
   const version=playVersion,intent=transitionIntent;endedVersion=version;endedIntent=intent;
   clearStall();clearTimeout(watchdog);
@@ -704,6 +720,9 @@ onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=
   // Safari can report a stream far longer than the song (HE-AAC at twice its length): past
   // the catalogue length only silence is left, so the next song starts.
   const known=audioQueue[audioIndex]?.duration,raw=onlineAudio.duration;
+  // A locked iPhone suspends the web app as soon as its audio stops, so 'ended'
+  // (and the next song) can wait until unlock. While hidden, chain in the last second.
+  if(appleMobile&&document.hidden&&playbackWanted&&!onlineAudio.paused&&!onlineAudio.seeking&&!resolutionBusy&&!recoveryInFlight&&audioIndex<audioQueue.length-1&&Number.isFinite(raw)&&raw>10&&lastPlaybackTime>.25&&raw-onlineAudio.currentTime<1.5){onlineAudio.onended();return}
   if(known>0&&playbackWanted&&!onlineAudio.paused&&(Number.isFinite(raw)?raw>known*1.4&&onlineAudio.currentTime>known+2:onlineAudio.currentTime>known+5))onlineAudio.onended();
 };
 ['#online-player .player-heading','#online-player .np-art'].forEach(s=>$(s).onclick=()=>nowPlaying.open());
@@ -711,8 +730,7 @@ $('#np-expand').onclick=()=>nowPlaying.open();
 function toggleOnline(){
   if(!audioQueue[audioIndex])return;
   if(onlineAudio.ended){
-    if(audioIndex<audioQueue.length-1)skipBy(1);
-    else{playbackWanted=true;endedVersion=-1;onlineAudio.onended()}
+    playbackWanted=true;endedVersion=-1;onlineAudio.onended();
     return;
   }
   const source=onlineAudio.getAttribute('src');
