@@ -1,0 +1,92 @@
+/* Tu Astra: night sky, lapis and Anubis gold. Uses the tokens from style.css. */
+.astra-page{max-width:1100px;margin:0 auto;animation:rise .5s var(--ease)}
+.astra-sky{position:absolute;inset:0;pointer-events:none;overflow:hidden;
+  background:
+    radial-gradient(1.5px 1.5px at 12% 18%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 28% 72%,#fff 50%,transparent 51%),
+    radial-gradient(2px 2px at 44% 30%,#f0d77c 50%,transparent 51%),radial-gradient(1px 1px at 63% 12%,#fff 50%,transparent 51%),
+    radial-gradient(1.5px 1.5px at 78% 58%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 88% 24%,#f0d77c 50%,transparent 51%),
+    radial-gradient(1px 1px at 8% 88%,#fff 50%,transparent 51%),radial-gradient(1.5px 1.5px at 52% 84%,#fff 50%,transparent 51%),
+    radial-gradient(1px 1px at 93% 86%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 36% 50%,#fff 50%,transparent 51%),
+    radial-gradient(ellipse at 50% 0%,#1e3a8a66,transparent 60%),radial-gradient(ellipse at 50% 30%,#d4af3722,transparent 55%);
+  animation:astra-twinkle 6s ease-in-out infinite alternate}
+@keyframes astra-twinkle{from{opacity:.65}to{opacity:1}}
+.astra-hero{position:relative;overflow:hidden;border:1px solid var(--line-gold);border-radius:24px;padding:48px 28px 36px;text-align:center;
+  background:linear-gradient(180deg,#0d1230 0%,#0a0a0c 100%);margin-bottom:22px}
+.astra-hero.skeleton{height:320px}
+.astra-hero>*:not(.astra-sky){position:relative}
+.astra-kicker{margin:0 0 8px;color:var(--muted);font-size:12px;letter-spacing:3px;text-transform:uppercase}
+.astra-hero h1{margin:0;font-family:var(--display);font-size:clamp(44px,9vw,84px);background:var(--gold-grad);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 24px #d4af3744)}
+.astra-lead{max-width:520px;margin:10px auto 22px;color:var(--text);font-size:17px}
+.astra-periods{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:22px}
+.astra-cta{display:inline-flex;align-items:center;justify-content:center;min-height:52px;padding:12px 30px;font-size:16px;border-radius:999px;text-decoration:none}
+.astra-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.astra-stat{padding:18px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);text-align:center}
+.astra-stat strong{display:block;font-family:var(--display);font-size:30px;color:var(--gold-2)}
+.astra-stat span{color:var(--muted);font-size:13px}
+.astra-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.astra-card{padding:20px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}
+.astra-card h2{margin:0 0 12px;font-family:var(--display);font-size:20px}
+.astra-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.astra-card-head h2{margin:0}
+.astra-rank{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:10px}
+.astra-rank li{display:flex;align-items:center;gap:12px;min-width:0}
+.astra-rank img{width:44px;height:44px;border-radius:8px;object-fit:cover;flex:none}
+.astra-rank div{min-width:0}
+.astra-rank strong,.astra-rank small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.astra-rank small{color:var(--muted);font-size:12.5px}
+.astra-n{flex:none;width:24px;font-family:var(--display);font-size:20px;color:var(--gold);text-align:center}
+.astra-sign{grid-column:1/-1;text-align:center}
+.astra-sign p{margin:6px 0}
+.astra-glyph{display:block;font-size:46px;line-height:1.2;color:var(--gold-2);filter:drop-shadow(0 0 14px #d4af3788)}
+@media(max-width:760px){
+  .astra-hero{padding:36px 18px 28px;border-radius:20px}
+  .astra-stats{grid-template-columns:repeat(2,1fr)}
+  .astra-grid{grid-template-columns:1fr}
+}
+
+/* Full-screen stories */
+body.astra-open{overflow:hidden}
+#astra-story{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;justify-content:center;color:var(--text);
+  background:linear-gradient(180deg,#0b0a14 0%,#101a3d 55%,#07070a 100%);
+  padding:max(56px,calc(env(safe-area-inset-top) + 44px)) 24px max(28px,env(safe-area-inset-bottom));touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.astra-bars{position:absolute;top:max(14px,env(safe-area-inset-top));left:14px;right:14px;display:flex;gap:5px;z-index:3}
+.astra-bars span{flex:1;height:3px;border-radius:3px;background:#ffffff33;overflow:hidden}
+.astra-bars i{display:block;height:100%;background:var(--gold-2);transform:scaleX(0);transform-origin:left}
+.astra-close{position:absolute;top:max(26px,calc(env(safe-area-inset-top) + 12px));right:10px;z-index:4;font-size:30px;width:48px;height:48px}
+#astra-story .astra-prev,#astra-story .astra-next{position:absolute;top:0;bottom:0;z-index:1;width:35%;border:0;background:transparent;box-shadow:none;border-radius:0;min-height:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#astra-story .astra-prev:hover,#astra-story .astra-next:hover,#astra-story .astra-prev:active,#astra-story .astra-next:active{background:transparent;transform:none}
+#astra-story .astra-prev{left:0}#astra-story .astra-next{right:0;width:65%}
+.astra-prev:focus-visible,.astra-next:focus-visible{outline:2px solid var(--gold);outline-offset:-6px}
+.astra-slide{position:relative;z-index:2;max-width:560px;width:100%;margin:0 auto;text-align:center;pointer-events:none;animation:astra-in .6s var(--ease)}
+.astra-slide button,.astra-slide a{pointer-events:auto}
+@keyframes astra-in{from{opacity:0;transform:translateY(24px) scale(.97)}}
+.astra-big{margin:6px 0 12px;font-family:var(--display);font-size:clamp(38px,10vw,64px);line-height:1.08;background:var(--gold-grad);-webkit-background-clip:text;background-clip:text;color:transparent;overflow-wrap:anywhere}
+.astra-huge{margin:0;font-family:var(--display);font-size:clamp(72px,24vw,150px);line-height:1;color:var(--text);text-shadow:0 0 40px #d4af3766}
+.astra-unit{margin:4px 0 18px;color:var(--gold-2);font-size:20px;letter-spacing:1px}
+.astra-slide p{font-size:17px;line-height:1.5}
+.astra-note{color:var(--muted)}
+.astra-eye{display:inline-block;margin-bottom:14px;color:var(--gold)}
+.astra-eye svg{width:96px;height:auto;filter:drop-shadow(0 0 18px #d4af37aa)}
+.astra-list{display:inline-block;margin:14px auto 0;padding-left:28px;text-align:left;font-size:17px}
+.astra-list li{margin:6px 0}.astra-list small{color:var(--muted)}
+.astra-songs{list-style:none;margin:18px 0 22px;padding:0;display:grid;gap:12px;text-align:left}
+.astra-songs li{display:flex;align-items:center;gap:12px;min-width:0;animation:astra-in .6s var(--ease) backwards}
+.astra-songs li:nth-child(2){animation-delay:.12s}.astra-songs li:nth-child(3){animation-delay:.24s}.astra-songs li:nth-child(4){animation-delay:.36s}.astra-songs li:nth-child(5){animation-delay:.48s}
+.astra-songs span{flex:none;width:26px;font-family:var(--display);font-size:24px;color:var(--gold)}
+.astra-songs img,.astra-songs i{flex:none;width:56px;height:56px;border-radius:10px;object-fit:cover;display:grid;place-items:center;background:var(--panel-2);font-style:normal}
+.astra-songs div{min-width:0}
+.astra-songs strong,.astra-songs small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.astra-songs small{color:var(--muted)}
+.astra-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0 24px}
+.astra-summary div{padding:16px 12px;border:1px solid var(--line-gold);border-radius:16px;background:#ffffff08;min-width:0}
+.astra-summary small{display:block;color:var(--muted);font-size:12px;letter-spacing:1.5px;text-transform:uppercase}
+.astra-summary strong{display:block;margin-top:4px;font-family:var(--display);font-size:20px;color:var(--gold-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.astra-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.astra-actions button,.s-songs .primary{min-height:50px;padding:12px 22px;border-radius:999px}
+@media(prefers-reduced-motion:reduce){.astra-sky,.astra-slide,.astra-songs li,.astra-page{animation:none}}
+
+/* Shared song dialog */
+.shared-song{text-align:center}
+.shared-song img{width:220px;max-width:70vw;height:auto;aspect-ratio:1;border-radius:16px;object-fit:cover;box-shadow:0 12px 40px #000a}
+.shared-song h2{margin:8px 0 4px}
+.sleep-options button{text-align:left}

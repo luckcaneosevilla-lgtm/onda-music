@@ -89,6 +89,8 @@ def init():
         CREATE TABLE IF NOT EXISTS online_playlist_tracks(playlist_id TEXT REFERENCES playlists(id) ON DELETE CASCADE,video_id TEXT NOT NULL,added INTEGER NOT NULL,PRIMARY KEY(playlist_id,video_id));
         CREATE TABLE IF NOT EXISTS recent_searches(user_id TEXT REFERENCES users(id),query TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(user_id,query));
         CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS online_plays(user_id TEXT REFERENCES users(id),video_id TEXT NOT NULL,title TEXT NOT NULL,artist TEXT NOT NULL,duration INTEGER,played INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS online_plays_user ON online_plays(user_id,played);
         CREATE TABLE IF NOT EXISTS admin_recovery(token TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id),expires INTEGER NOT NULL);
         ''')
         if not c.execute("SELECT 1 FROM migrations WHERE name='hybrid-reference-ids-v1'").fetchone():
@@ -100,10 +102,52 @@ def init():
             for table in ('online_saves','online_playlist_tracks'):
                 c.execute("UPDATE OR IGNORE "+table+" SET video_id='piped:'||video_id WHERE instr(video_id,':')=0")
             c.execute("INSERT INTO migrations VALUES('hybrid-reference-ids-v1')")
+        if not c.execute("SELECT 1 FROM migrations WHERE name='online-plays-v1'").fetchone():
+            # Tu Astra starts from the history that already exists: one play per song.
+            rows=c.execute('SELECT s.user_id,s.video_id,s.last_played,k.metadata FROM online_saves s JOIN online_catalog k ON k.video_id=s.video_id WHERE s.last_played IS NOT NULL').fetchall()
+            for row in rows:
+                item=json.loads(row['metadata']);c.execute('INSERT INTO online_plays VALUES(?,?,?,?,?,?)',(row['user_id'],row['video_id'],*play_fields(item),row['last_played']))
+            c.execute("INSERT INTO migrations VALUES('online-plays-v1')")
+        c.execute('DELETE FROM online_plays WHERE played<?',(now()-400*86400,))
         c.execute('DELETE FROM online_catalog WHERE refreshed<?',(now()-30*86400,))
         c.execute('INSERT OR IGNORE INTO plans VALUES(?,?,?,?,?)', ('free',1024*MB,10,50*MB,'{}'))
         c.execute('INSERT OR IGNORE INTO plans VALUES(?,?,?,?,?)', ('premium',20*1024*MB,200,250*MB,'{}'))
     resolver.persist(DATA / 'onda.sqlite',cloud_factory=(lambda:turso.Connection(TURSO)) if TURSO else None,scope=os.environ.get('IVOX_AUDIO_CACHE_SCOPE'))
+
+def play_fields(item):
+    """Title, main artist and length kept with each play: the catalogue expires after 30 days."""
+    artists=item.get('artists') or []
+    artist=str(artists[0] if artists and isinstance(artists[0],str) else re.split(r',| & | x | feat\.? ',str(item.get('channel') or ''),flags=re.I)[0]).strip()
+    artist=re.sub(r' - Topic$','',artist)[:200] or 'Artista desconocido'
+    duration=item.get('duration');duration=int(duration) if isinstance(duration,(int,float)) and 0<duration<6*3600 else None
+    return str(item.get('title') or 'Canción')[:300],artist,duration
+
+def wrapped(c,uid,period,offset):
+    """Listening summary for one account. offset: the browser's UTC offset in minutes."""
+    spans={'week':7,'month':30,'year':365}
+    since=now()-spans[period]*86400 if period in spans else 0
+    rows=c.execute('SELECT video_id,title,artist,duration,played FROM online_plays WHERE user_id=? AND played>=? ORDER BY played',(uid,since)).fetchall()
+    songs={};artists={};hours=[0]*24;days=[0]*7;seconds=0;dates=set()
+    for row in rows:
+        length=row['duration'] or 200;seconds+=length
+        song=songs.setdefault(row['video_id'],{'id':row['video_id'],'title':row['title'],'artist':row['artist'],'plays':0,'seconds':0})
+        song['plays']+=1;song['seconds']+=length
+        artist=artists.setdefault(row['artist'].casefold(),{'name':row['artist'],'plays':0,'seconds':0,'songs':set()})
+        artist['plays']+=1;artist['seconds']+=length;artist['songs'].add(row['video_id'])
+        local=time.gmtime(row['played']+offset*60);hours[local.tm_hour]+=1;days[local.tm_wday]+=1;dates.add((local.tm_year,local.tm_yday))
+    top_songs=sorted(songs.values(),key=lambda v:(-v['plays'],-v['seconds']))[:5]
+    top_artists=[{'name':a['name'],'plays':a['plays'],'minutes':round(a['seconds']/60),'songs':len(a['songs'])} for a in sorted(artists.values(),key=lambda v:(-v['plays'],-v['seconds']))[:5]]
+    metadata=provider.metadata(c,[v['id'] for v in top_songs])
+    for song in top_songs:
+        item=metadata.get(song['id'],{})
+        song.update(minutes=round(song.pop('seconds')/60),thumbnail=item.get('thumbnail',''),item=item if item.get('available',True) else None)
+    # Longest run of consecutive days with music.
+    ordinals=sorted({time.mktime((y,1,1,12,0,0,0,0,0))//86400+d-1 for y,d in dates});streak=best=0;previous=None
+    for day in ordinals:
+        streak=streak+1 if previous is not None and day-previous==1 else 1;best=max(best,streak);previous=day
+    return {'period':period if period in spans else 'all','plays':len(rows),'minutes':round(seconds/60),'songs':len(songs),'artists':len(artists),
+            'top_songs':top_songs,'top_artists':top_artists,'peak_hour':hours.index(max(hours)) if rows else None,
+            'peak_day':days.index(max(days)) if rows else None,'days':len(dates),'streak':best,'first':rows[0]['played'] if rows else None}
 
 def password_hash(password):
     salt = secrets.token_hex(16)
@@ -238,7 +282,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_response(200);self.headers_common('application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
                 if path=='/youtube-setup':
                     self.send(410,{'error':'La reproducción actual usa Piped y Audius. Consulta README_SECCION_REPRODUCCION.md.'});return
-                static_types={'boot.css':'text/css','boot.js':'text/javascript','release.js':'text/javascript','release.css':'text/css','player-controls.js':'text/javascript','app.js':'text/javascript','online.js':'text/javascript','sheet.js':'text/javascript','home.js':'text/javascript','offline.js':'text/javascript','crossfade.js':'text/javascript','sheet.css':'text/css','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
+                static_types={'boot.css':'text/css','boot.js':'text/javascript','release.js':'text/javascript','release.css':'text/css','player-controls.js':'text/javascript','app.js':'text/javascript','online.js':'text/javascript','sheet.js':'text/javascript','home.js':'text/javascript','offline.js':'text/javascript','crossfade.js':'text/javascript','astra.js':'text/javascript','astra.css':'text/css','sheet.css':'text/css','pwa.js':'text/javascript','recover.js':'text/javascript','recover.html':'text/html; charset=utf-8','service-worker.js':'text/javascript','style.css':'text/css','online.css':'text/css','player.css':'text/css','manifest.json':'application/manifest+json','icon-192x192.png':'image/png','icon-512x512.png':'image/png','silence.wav':'audio/wav','fonts/cinzel.woff2':'font/woff2','fonts/inter.woff2':'font/woff2','fonts/OFL.txt':'text/plain; charset=utf-8','index.html':'text/html; charset=utf-8'}
                 filename='recover.html' if path=='/recover' else path[1:] if path[1:] in static_types else 'index.html'
                 raw=(ROOT/'web'/filename).read_bytes()
                 if filename=='index.html':raw=raw.replace(b'</head>',f'<meta name="ivox-version" content="{APP_VERSION}"><meta name="ivox-release" content="{RELEASE_VERSION}"></head>'.encode())
@@ -494,9 +538,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200,{'saves':saves,'playlists':playlists,'items':metadata,'recent':[r[0] for r in c.execute('SELECT query FROM recent_searches WHERE user_id=? ORDER BY created DESC,rowid DESC',(uid,))]});return
         if path=='/api/online/library' and method=='DELETE':
             c.execute('DELETE FROM online_playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE user_id=?)',(uid,))
-            c.execute('DELETE FROM online_saves WHERE user_id=?',(uid,));c.execute('DELETE FROM recent_searches WHERE user_id=?',(uid,));c.commit();self.send(200,{});return
+            c.execute('DELETE FROM online_saves WHERE user_id=?',(uid,));c.execute('DELETE FROM recent_searches WHERE user_id=?',(uid,));c.execute('DELETE FROM online_plays WHERE user_id=?',(uid,));c.commit();self.send(200,{});return
+        if path=='/api/online/wrapped' and method=='GET':
+            q=parse_qs(urlparse(self.path).query);period=q.get('period',['month'])[0]
+            try:offset=max(-840,min(840,int(q.get('tz',['0'])[0])))
+            except ValueError:offset=0
+            self.send(200,wrapped(c,uid,period,offset));return
+        m=re.fullmatch(r'/api/online/item/((?:piped|audius):[A-Za-z0-9_-]+)',path)
+        if m and method=='GET':
+            require(valid_id(m[1]),'Referencia inválida.')
+            item=provider.metadata(c,[m[1]])[m[1]];require(item.get('available',True),'Esta canción ya no está en el catálogo. Búscala de nuevo.',404)
+            self.send(200,{'item':item});return
         if path=='/api/online/history' and method=='DELETE':
-            c.execute('UPDATE online_saves SET last_played=NULL WHERE user_id=?',(uid,))
+            c.execute('UPDATE online_saves SET last_played=NULL WHERE user_id=?',(uid,));c.execute('DELETE FROM online_plays WHERE user_id=?',(uid,))
             c.execute('DELETE FROM online_saves WHERE user_id=? AND favorite=0 AND later=0',(uid,));c.commit();self.send(200,{});return
         m=re.fullmatch(r'/api/online/items/((?:piped|audius):[A-Za-z0-9_-]+)',path)
         if m and method=='PATCH':
@@ -509,7 +563,12 @@ class Handler(BaseHTTPRequestHandler):
             c.execute('INSERT OR IGNORE INTO online_saves(user_id,video_id) VALUES(?,?)',(uid,vid))
             for key in ('favorite','later'):
                 if key in b:c.execute('UPDATE online_saves SET '+key+'=? WHERE user_id=? AND video_id=?',(int(b[key]),uid,vid))
-            if b.get('played'): c.execute('UPDATE online_saves SET last_played=? WHERE user_id=? AND video_id=?',(now(),uid,vid))
+            if b.get('played'):
+                c.execute('UPDATE online_saves SET last_played=? WHERE user_id=? AND video_id=?',(now(),uid,vid))
+                row=c.execute('SELECT metadata FROM online_catalog WHERE video_id=?',(vid,)).fetchone()
+                # One play per song start; a reconnect within a minute is the same listen.
+                if row and not c.execute('SELECT 1 FROM online_plays WHERE user_id=? AND video_id=? AND played>?',(uid,vid,now()-60)).fetchone():
+                    c.execute('INSERT INTO online_plays VALUES(?,?,?,?,?,?)',(uid,vid,*play_fields(json.loads(row['metadata'])),now()))
             c.execute('DELETE FROM online_saves WHERE user_id=? AND favorite=0 AND later=0 AND last_played IS NULL',(uid,))
             # The real length lets the player stop at the song's end when it had no catalogue length.
             c.commit();self.send(200,{'duration':resolver.duration(vid.split(':',1)[1])} if b.get('played') and vid.startswith('piped:') else {});return

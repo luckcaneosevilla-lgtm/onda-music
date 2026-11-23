@@ -35,6 +35,10 @@ let pickedId=null;
 let playController=null,skipTimer=null,watchdog,failStreak=0,audioUnlocked=false,resumeAt=0,fixingDuration=false;
 let playbackWanted=false,stallTimer=null,recoveryAttempts=0,lastPlaybackTime=0,recoveryInFlight=false;
 let autoplay=(()=>{try{return localStorage.getItem('ivox-autoplay')!=='0'}catch{return true}})(),radioTried=new Set(),freshRetried=new Set(),radioPromise=null,radioQueue=null,radioController=null,transitionIntent=0,queueFinished=false,nearEnd=false,loadingSince=0;
+// Repeat: 'off' | 'all' (the queue starts again) | 'one' (the same song again).
+let repeatMode=(()=>{try{const v=localStorage.getItem('ivox-repeat');return ['all','one'].includes(v)?v:'off'}catch{return 'off'}})();
+// Sleep timer: a deadline (ms) or the end of the current song.
+const sleepTimer={until:0,endOfSong:false,fading:false,listeners:new Set()};
 const duration=n=>n==null?'—':`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`;
 const savedVideo=id=>onlineData.saves.find(s=>s.video_id===id)||{};
 const videoById=id=>searchView.items.find(v=>v.id===id)||searchView.artist?.songs?.find(v=>v.id===id)||artistView?.songs?.find(v=>v.id===id)||onlineData.items[id]||audioQueue.find(v=>v.id===id)||window.homeLookup?.(id)||window.offlineLookup?.(id);
@@ -354,11 +358,12 @@ async function setFavorite(v,value,origin){
 }
 function externalLink(v){if(v.provider==='piped'&&onlineStatus?.allow_youtube_external)return `<a class="text-link" href="https://www.youtube.com/watch?v=${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en YouTube (fuera de Ivox-Astra)</a>`;if(v.provider==='audius')return `<a class="text-link" href="https://audius.co/tracks/${esc(v.provider_id)}" target="_blank" rel="noopener">Abrir en Audius</a>`;return ''}
 function onlineOptions(v){
-  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="play-next">Reproducir a continuación</button><button id="enqueue">Añadir a la cola</button>${v.provider==='piped'?'<button id="start-radio">◉ Iniciar radio de esta canción</button>':''}<button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button>${v.provider!=='local'?`<button id="offline-toggle">${offline.has(v.id)?'✓ Disponible sin conexión · quitar':'↓ Guardar sin conexión'}${offline.premium()?'':' <span class="pill">Premium</span>'}</button>`:''}${externalLink(v)}</div>`);
+  if(!v)return;const s=savedVideo(v.id);openDialog(`<h2>${esc(v.title)}</h2><p class="muted">${esc(v.channel)} · ${esc(v.source)}</p><div class="option-list"><button id="play-next">Reproducir a continuación</button><button id="enqueue">Añadir a la cola</button>${v.provider==='piped'?'<button id="start-radio">◉ Iniciar radio de esta canción</button>':''}<button id="save-later">${s.later?'Quitar de':'Guardar en'} escuchar después</button><button id="to-playlist">Guardar en playlist</button>${v.provider!=='local'?'<button id="share-song">↗ Compartir canción</button>':''}${v.provider!=='local'?`<button id="offline-toggle">${offline.has(v.id)?'✓ Disponible sin conexión · quitar':'↓ Guardar sin conexión'}${offline.premium()?'':' <span class="pill">Premium</span>'}</button>`:''}${externalLink(v)}</div>`);
   if($('#offline-toggle'))$('#offline-toggle').onclick=()=>{dialog.close();offline.has(v.id)?perform(()=>offline.remove(v.id)):offline.add([v])};
   $('#play-next').onclick=()=>{dialog.close();notify(enqueue([v],true)?'Reproduciendo «'+v.title+'».':'Sonará a continuación.')};
   $('#enqueue').onclick=()=>{dialog.close();notify(enqueue([v])?'Reproduciendo «'+v.title+'».':'Añadido a la cola.')};
   if($('#start-radio'))$('#start-radio').onclick=()=>{dialog.close();startRadio(v)};
+  if($('#share-song'))$('#share-song').onclick=()=>{dialog.close();shareSong(v)};
   $('#save-later').onclick=()=>perform(async()=>{await api('/api/online/items/'+v.id,'PATCH',{later:!s.later});onlineData=await api('/api/online/library');dialog.close();if(location.pathname==='/library')drawOnlineLibrary();notify(s.later?'Quitado de escuchar después.':'Guardado para escuchar después.')});$('#to-playlist').onclick=()=>pickOnlinePlaylist(v);
 }
 function pickOnlinePlaylist(v){
@@ -510,6 +515,7 @@ function skipTo(index){
 const skipBy=delta=>skipTo(audioIndex+delta);
 function nextTrack(){
   if(audioIndex<audioQueue.length-1)return skipBy(1);
+  if(repeatMode==='all'&&audioQueue.length>1)return skipTo(0);
   const queue=audioQueue,index=audioIndex,version=playVersion,intent=transitionIntent;
   notify('Buscando canciones similares…');
   ensureRadio(true).then(()=>{
@@ -573,6 +579,25 @@ window.playLocal=(items,index)=>playList(items,index);
 
 function clearStall(){clearTimeout(stallTimer);stallTimer=null;}
 function pausePlayback(){transitionIntent++;onlineAudio.autoplay=false;playbackWanted=false;recoveryInFlight=false;clearStall();clearTimeout(watchdog);onlineAudio.pause();if(audioQueue[audioIndex])playerState('paused');}
+// The timer is checked on every timeupdate (it keeps firing on a locked phone while
+// music plays) and once a second. Where volume works, the last 10 s fade out.
+function sleepNow(){
+  const base=sleepTimer.fading?sleepTimer.base:null;sleepTimer.until=0;sleepTimer.endOfSong=false;sleepTimer.fading=false;
+  pausePlayback();if(base!=null)onlineAudio.volume=base;$('#playback-status').textContent='Temporizador: música en pausa. Que descanses.';
+  sleepTimer.listeners.forEach(f=>f());
+}
+function checkSleep(){
+  if(!sleepTimer.until||!playbackWanted)return;const left=sleepTimer.until-Date.now();
+  if(left<=0){sleepNow();return}
+  if(left<10000&&!appleMobile&&!(typeof crossfade!=='undefined'&&crossfade.active)){if(!sleepTimer.fading){sleepTimer.fading=true;sleepTimer.base=onlineAudio.volume}onlineAudio.volume=sleepTimer.base*left/10000}
+}
+setInterval(checkSleep,1000);
+window.IVoxSleep={
+  set(minutes){if(sleepTimer.fading){onlineAudio.volume=sleepTimer.base;sleepTimer.fading=false}sleepTimer.endOfSong=minutes==='end';sleepTimer.until=typeof minutes==='number'?Date.now()+minutes*60000:0;sleepTimer.listeners.forEach(f=>f())},
+  get state(){return {until:sleepTimer.until,endOfSong:sleepTimer.endOfSong}},
+  onChange(f){sleepTimer.listeners.add(f)}
+};
+window.IVoxRepeat={get mode(){return repeatMode},set mode(v){repeatMode=['all','one'].includes(v)?v:'off';try{localStorage.setItem('ivox-repeat',repeatMode)}catch{}}};
 function recoverCurrent(){
   const src=onlineAudio.getAttribute('src');
   if(recoveryInFlight)return playbackWanted;
@@ -629,9 +654,12 @@ onlineAudio.onended=async event=>{
     return;
   }
   if(endedVersion===playVersion){resumePendingEnd();return}
+  if(sleepTimer.endOfSong){sleepNow();return}
+  if(repeatMode==='one'){clearStall();clearTimeout(watchdog);try{onlineAudio.currentTime=0}catch{}onlineAudio.play().catch(()=>startOnline());return}
   const version=playVersion,intent=transitionIntent;endedVersion=version;endedIntent=intent;
   clearStall();clearTimeout(watchdog);
   if(audioIndex<audioQueue.length-1){advance();return}
+  if(repeatMode==='all'&&audioQueue.length>1){audioIndex=-1;advance();return}
   playerState('loading');$('#playback-status').textContent='Buscando más música para ti…';let added=await ensureRadio(true);
   // One more try after a moment: a request that just failed (network, rate limit) may answer now.
   if(version!==playVersion||intent!==transitionIntent)return;
@@ -711,7 +739,7 @@ function progress(time,total){
   if('mediaSession' in navigator&&navigator.mediaSession.setPositionState&&Number.isFinite(total)&&total>0&&Date.now()-positionStamp>1000){positionStamp=Date.now();try{navigator.mediaSession.setPositionState({duration:total,position:Math.min(time,total),playbackRate:onlineAudio.playbackRate||1})}catch{}}
 }
 onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=>{
-  if(onlineAudio.getAttribute('src')==='/silence.wav'||fixingDuration)return;const total=trackDuration();progress(onlineAudio.currentTime,total);
+  if(onlineAudio.getAttribute('src')==='/silence.wav'||fixingDuration)return;const total=trackDuration();progress(onlineAudio.currentTime,total);checkSleep();
   // Some browsers (Safari) can skip or misorder 'playing': audible progress means it plays.
   if(!onlineAudio.paused&&onlineAudio.readyState>=3&&onlineAudio.currentTime>lastPlaybackTime+.05&&$('#online-player').dataset.state==='loading'&&!recoveryInFlight)onlineAudio.onplaying();
   if(onlineAudio.readyState>=2)lastPlaybackTime=onlineAudio.currentTime;
@@ -722,7 +750,7 @@ onlineAudio.ontimeupdate=onlineAudio.ondurationchange=onlineAudio.onprogress=()=
   const known=audioQueue[audioIndex]?.duration,raw=onlineAudio.duration;
   // A locked iPhone suspends the web app as soon as its audio stops, so 'ended'
   // (and the next song) can wait until unlock. While hidden, chain in the last second.
-  if(appleMobile&&document.hidden&&playbackWanted&&!onlineAudio.paused&&!onlineAudio.seeking&&!resolutionBusy&&!recoveryInFlight&&audioIndex<audioQueue.length-1&&Number.isFinite(raw)&&raw>10&&lastPlaybackTime>.25&&raw-onlineAudio.currentTime<1.5){onlineAudio.onended();return}
+  if(appleMobile&&document.hidden&&playbackWanted&&!onlineAudio.paused&&!onlineAudio.seeking&&!resolutionBusy&&!recoveryInFlight&&(audioIndex<audioQueue.length-1||repeatMode!=='off'||sleepTimer.endOfSong)&&Number.isFinite(raw)&&raw>10&&lastPlaybackTime>.25&&raw-onlineAudio.currentTime<1.5){onlineAudio.onended();return}
   if(known>0&&playbackWanted&&!onlineAudio.paused&&(Number.isFinite(raw)?raw>known*1.4&&onlineAudio.currentTime>known+2:onlineAudio.currentTime>known+5))onlineAudio.onended();
 };
 ['#online-player .player-heading','#online-player .np-art'].forEach(s=>$(s).onclick=()=>nowPlaying.open());
