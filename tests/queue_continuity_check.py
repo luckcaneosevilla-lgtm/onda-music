@@ -146,8 +146,10 @@ try:
     elif case=='hidden-ios-early-handoff':
      # Locked iPhone: chain before audio stops, because iOS suspends the page
      # (and its 'ended' handler) as soon as nothing is playing.
-     page.evaluate("() => {Object.defineProperty(document,'hidden',{configurable:true,value:true});const at=onlineAudio.duration-1;lastPlaybackTime=at-.5;Object.defineProperty(onlineAudio,'currentTime',{configurable:true,value:at});onlineAudio.addEventListener('emptied',()=>{delete onlineAudio.currentTime},{once:true});onlineAudio.dispatchEvent(new Event('timeupdate'))}")
+     page.evaluate("() => {Object.defineProperty(document,'hidden',{configurable:true,value:true});const at=onlineAudio.duration-1;lastPlaybackTime=at-.5;Object.defineProperty(onlineAudio,'currentTime',{configurable:true,value:at});onlineAudio.addEventListener('emptied',()=>{delete onlineAudio.currentTime},{once:true});window.handoffPauses=0;const pause=onlineAudio.pause.bind(onlineAudio);onlineAudio.pause=()=>{window.handoffPauses++;pause()};onlineAudio.dispatchEvent(new Event('timeupdate'))}")
      assert page.evaluate("audioIndex===1 && onlineAudio.getAttribute('src').includes('next0000001')"),'Locked iPhone waited for ended before chaining'
+     # pause() in the background releases the iOS audio session: the next song then plays silently.
+     assert page.evaluate('handoffPauses')==0,'Locked iPhone paused before swapping to the next song'
     elif case=='hidden-failure-no-timers':
      # Only an unplayed automatic queue entry may be skipped on failure.
      page.evaluate("() => {pickedId=null;lastPlaybackTime=0;Object.defineProperty(document,'hidden',{configurable:true,value:true});playbackFailure('Fixture failure.')}")

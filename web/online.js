@@ -426,7 +426,9 @@ async function startOnline(autostart=true,minimumLevel=1,resumeFrom=0){
   }
   playbackWanted=autostart;
   resolutionBusy=true;activeLevel=0;recordedReference=null;
-  if(onlineAudio.getAttribute('src'))onlineAudio.pause();
+  // On a locked iPhone an explicit pause() releases the audio session; the next
+  // play() then runs a clock with no sound until unlock. Swap the source live instead.
+  if(onlineAudio.getAttribute('src')&&!(appleMobile&&document.hidden&&autostart))onlineAudio.pause();
   showTrack(item);$('#playback-status').textContent='Preparando audio…';playerState('loading');armWatchdog(version);
   try{
     let result;
